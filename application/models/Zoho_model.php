@@ -59,9 +59,12 @@ defined('BASEPATH') or exit('No direct script access allowed');
  */
 class Zoho_model extends CI_Model
 {
-
-
-    // Runtime token storage
+    private $people_url;
+    private $accounts_url;
+    private $client_id;
+    private $client_secret;
+    private $refresh_token;
+    private $ssl_verify;
     private $access_token = null;
     private $token_expires = null;
 

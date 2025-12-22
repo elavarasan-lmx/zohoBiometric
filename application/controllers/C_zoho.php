@@ -49,6 +49,27 @@ class C_zoho extends CI_Controller
         $this->load->model('Zoho_model');
     }
 
+    public function index()
+    {
+        $this->load->view('dashboard');
+    }
+
+    public function reports()
+    {
+        $this->load->view('reports');
+    }
+
+    public function dashboard()
+    {
+        $this->load->view('dashboard');
+    }
+    public function get_employees()
+    {
+        $employees = $this->db->select('emp_id, name')->order_by('name', 'ASC')->get('zoho_employees')->result();
+        header('Content-Type: application/json');
+        echo json_encode(['employees' => $employees]);
+    }
+
     /**
      * Manual employee sync from Zoho People
      * URL: GET /C_zoho/sync_employees
@@ -71,7 +92,7 @@ class C_zoho extends CI_Controller
 
         $imported = 0;
         $updated = 0;
-        
+
         foreach ($employees['response']['result'] as $emp) {
             $data = [
                 'emp_id' => $emp['Employee_ID'] ?? '',
@@ -98,7 +119,7 @@ class C_zoho extends CI_Controller
         }
 
         log_message('info', '[EMPLOYEE_SYNC] Completed: ' . $imported . ' imported, ' . $updated . ' updated');
-        
+
         echo json_encode([
             'status' => 'completed',
             'summary' => [
@@ -167,12 +188,14 @@ class C_zoho extends CI_Controller
             // We treat duplicates as success since the data is already in Zoho
             $isSuccess = false;
             $isDuplicate = false;
-            
+
             if (is_array($response) && isset($response[0]['response'])) {
                 if ($response[0]['response'] === 'success') {
                     $isSuccess = true;
-                } elseif (isset($response[0]['msg']) && 
-                         (stripos($response[0]['msg'], 'duplicate') !== false)) {
+                } elseif (
+                    isset($response[0]['msg']) &&
+                    (stripos($response[0]['msg'], 'duplicate') !== false)
+                ) {
                     $isDuplicate = true;
                 }
             }
@@ -251,15 +274,14 @@ class C_zoho extends CI_Controller
      * 
      * Returns formatted JSON with date range data (limited for performance)
      */
-    public function dashboard()
+    public function dashboard_api()
     {
-        set_time_limit(60); // 1 minute limit
-        
+        set_time_limit(60);
+
         $from = $this->input->get('from');
         $to = $this->input->get('to');
         $date = $this->input->get('date');
 
-        // Determine date range
         if ($from && $to) {
             $start_date = $from;
             $end_date = $to;
@@ -302,7 +324,8 @@ class C_zoho extends CI_Controller
                 ->get()->result()
         ];
 
-        echo '<pre>' . json_encode($data, JSON_PRETTY_PRINT) . '</pre>';
+        header('Content-Type: application/json');
+        echo json_encode($data);
     }
 
     /**
@@ -325,16 +348,16 @@ class C_zoho extends CI_Controller
         $date = $this->input->get('date');
         $from = $this->input->get('from');
         $to = $this->input->get('to');
-        
+
         // Validate required empId parameter
         if (empty($empId)) {
             echo json_encode([
-                'status' => 'error', 
+                'status' => 'error',
                 'message' => 'empId parameter is required. Zoho API does not support fetching all employees attendance at once.'
             ]);
             return;
         }
-        
+
         // Determine date range
         if ($from && $to) {
             $start_date = $from;
@@ -344,27 +367,27 @@ class C_zoho extends CI_Controller
         } else {
             $start_date = $end_date = date('Y-m-d');
         }
-        
+
         $imported = 0;
         $updated = 0;
         $errors = 0;
         $details = [];
-        
+
         // Get attendance data from Zoho for date range
         $current_date = $start_date;
         while (strtotime($current_date) <= strtotime($end_date)) {
             $zoho_data = $this->Zoho_model->getAttendance($current_date, $empId);
-            
+
             if (isset($zoho_data['firstIn']) && isset($zoho_data['lastOut'])) {
                 $first_in = date('H:i:s', strtotime($zoho_data['firstIn']));
                 $last_out = date('H:i:s', strtotime($zoho_data['lastOut']));
-                
+
                 // Check if record exists
                 $existing = $this->db->where([
                     'emp_id' => $empId,
                     'work_date' => $current_date
                 ])->get('zoho_attendance_daily')->row();
-                
+
                 if ($existing) {
                     // Update existing record
                     $this->db->update('zoho_attendance_daily', [
@@ -386,7 +409,7 @@ class C_zoho extends CI_Controller
                     ]);
                     $imported++;
                 }
-                
+
                 $details[] = [
                     'emp_id' => $empId,
                     'date' => $current_date,
@@ -399,7 +422,7 @@ class C_zoho extends CI_Controller
             } else {
                 $errors++;
                 log_message('error', '[ZOHO_IMPORT] No attendance data for empId: ' . $empId . ', date: ' . $current_date);
-                
+
                 $details[] = [
                     'emp_id' => $empId,
                     'date' => $current_date,
@@ -407,12 +430,12 @@ class C_zoho extends CI_Controller
                     'action' => 'SKIPPED'
                 ];
             }
-            
+
             $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
         }
-        
+
         log_message('info', '[ZOHO_IMPORT] Completed for empId ' . $empId . ': ' . $imported . ' imported, ' . $updated . ' updated, ' . $errors . ' errors');
-        
+
         echo json_encode([
             'status' => 'completed',
             'date_range' => [
@@ -452,7 +475,7 @@ class C_zoho extends CI_Controller
         // Remove execution time limit for large datasets
         set_time_limit(0);
         ini_set('memory_limit', '512M');
-        
+
         // Prevent accidental double-runs - require confirmation parameter
         $confirm = $this->input->get('confirm');
         if ($confirm !== 'yes') {
@@ -463,14 +486,14 @@ class C_zoho extends CI_Controller
             ]);
             return;
         }
-        
+
         // Stop processing if user closes browser
         ignore_user_abort(false);
-        
+
         $date = $this->input->get('date');
         $from = $this->input->get('from');
         $to = $this->input->get('to');
-        
+
         // Determine date range
         if ($from && $to) {
             $start_date = $from;
@@ -480,46 +503,46 @@ class C_zoho extends CI_Controller
         } else {
             $start_date = $end_date = date('Y-m-d');
         }
-        
+
         // Get all employees from local database
         $employees = $this->db->select('emp_id')->get('zoho_employees')->result();
-        
+
         if (empty($employees)) {
             echo json_encode(['status' => 'error', 'message' => 'No employees found. Run sync_employees first.']);
             return;
         }
-        
+
         $imported = 0;
         $updated = 0;
         $errors = 0;
         $processed_records = 0;
         $total_employees = count($employees);
-        
+
         // Calculate total days in date range
         $total_days = (strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24) + 1;
         $total_records = $total_employees * $total_days;
-        
+
         foreach ($employees as $employee) {
             // Check if browser connection is still active
             if (connection_aborted()) {
                 log_message('info', '[ZOHO_IMPORT_ALL] Connection aborted by user at record ' . $processed_records);
                 break;
             }
-            
+
             $current_date = $start_date;
-            
+
             while (strtotime($current_date) <= strtotime($end_date)) {
                 $processed_records++;
-                
+
                 // Skip future dates - cannot have attendance for dates that haven't occurred
                 if (strtotime($current_date) > time()) {
                     $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
                     continue;
                 }
-                
+
                 // Fetch attendance from Zoho API for this employee and date
                 $zoho_data = $this->Zoho_model->getAttendance($current_date, $employee->emp_id);
-                
+
                 if (isset($zoho_data['firstIn']) && isset($zoho_data['lastOut'])) {
                     // Skip if Zoho returns dash values (absent/weekend employees)
                     if ($zoho_data['firstIn'] === '-' || $zoho_data['lastOut'] === '-') {
@@ -528,10 +551,10 @@ class C_zoho extends CI_Controller
                         $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
                         continue;
                     }
-                    
+
                     $first_in = date('H:i:s', strtotime($zoho_data['firstIn']));
                     $last_out = date('H:i:s', strtotime($zoho_data['lastOut']));
-                    
+
                     // Comprehensive validation for Zoho default/invalid data
                     // Zoho sometimes returns placeholder times like 05:30:00 or 00:00:00
                     $is_invalid = (
@@ -547,7 +570,7 @@ class C_zoho extends CI_Controller
                         // Check status for non-working days
                         (isset($zoho_data['status']) && in_array(strtolower($zoho_data['status']), ['absent', 'leave', 'holiday', 'weekend']))
                     );
-                    
+
                     if ($is_invalid) {
                         $errors++;
                         // Determine specific reason for rejection
@@ -558,18 +581,18 @@ class C_zoho extends CI_Controller
                         elseif (strtotime($zoho_data['firstIn']) >= strtotime($zoho_data['lastOut'])) $reason = 'checkout before checkin';
                         elseif ((strtotime($zoho_data['lastOut']) - strtotime($zoho_data['firstIn'])) < 3600) $reason = 'duration < 1 hour';
                         elseif (isset($zoho_data['status'])) $reason = 'status: ' . $zoho_data['status'];
-                        
+
                         log_message('info', '[ZOHO_IMPORT_ALL] Skipped invalid data for emp: ' . $employee->emp_id . ', date: ' . $current_date . ' - Reason: ' . $reason . ' (firstIn: ' . $first_in . ', lastOut: ' . $last_out . ')');
                         $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
                         continue;
                     }
-                    
+
                     // Check if record exists in local database
                     $existing = $this->db->where([
                         'emp_id' => $employee->emp_id,
                         'work_date' => $current_date
                     ])->get('zoho_attendance_daily')->row();
-                    
+
                     if ($existing) {
                         // Update existing record with latest data from Zoho
                         $this->db->update('zoho_attendance_daily', [
@@ -595,19 +618,19 @@ class C_zoho extends CI_Controller
                     // No attendance data found for this employee/date
                     $errors++;
                 }
-                
+
                 // Log progress every 50 records for monitoring
                 if ($processed_records % 50 == 0) {
                     log_message('info', '[ZOHO_IMPORT_ALL] Progress: ' . $processed_records . '/' . $total_records . ' records processed');
                 }
-                
+
                 // Move to next date
                 $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
             }
         }
-        
+
         log_message('info', '[ZOHO_IMPORT_ALL] Completed: ' . $imported . ' imported, ' . $updated . ' updated, ' . $errors . ' errors');
-        
+
         echo '<pre>' . json_encode([
             'status' => 'completed',
             'date_range' => [
@@ -638,17 +661,17 @@ class C_zoho extends CI_Controller
     public function cleanup_future_dates()
     {
         $today = date('Y-m-d');
-        
+
         // Delete future date records
         $this->db->where('work_date >', $today)->delete('zoho_attendance_daily');
         $future_deleted = $this->db->affected_rows();
-        
+
         // Delete records with identical check-in/check-out times (placeholder data)
         $this->db->where('first_in = last_out')->delete('zoho_attendance_daily');
         $placeholder_deleted = $this->db->affected_rows();
-        
+
         log_message('info', '[CLEANUP] Deleted ' . $future_deleted . ' future records and ' . $placeholder_deleted . ' placeholder records');
-        
+
         echo '<pre>' . json_encode([
             'status' => 'completed',
             'cleanup_date' => $today,
@@ -682,7 +705,7 @@ class C_zoho extends CI_Controller
         $date = $this->input->get('date');
         $from = $this->input->get('from');
         $to = $this->input->get('to');
-        
+
         // Determine date range
         if ($from && $to) {
             $start_date = $from;
@@ -692,13 +715,13 @@ class C_zoho extends CI_Controller
         } else {
             $start_date = $end_date = date('Y-m-d');
         }
-        
+
         // Get unsynced records
         $records = $this->db->where('work_date >=', $start_date)
             ->where('work_date <=', $end_date)
             ->where('synced', 0)
             ->get('zoho_attendance_daily')->result();
-        
+
         if (empty($records)) {
             echo json_encode([
                 'status' => 'info',
@@ -707,11 +730,11 @@ class C_zoho extends CI_Controller
             ]);
             return;
         }
-        
+
         $success = 0;
         $failed = 0;
         $details = [];
-        
+
         foreach ($records as $record) {
             $data = [
                 'empId' => $record->emp_id,
@@ -719,9 +742,9 @@ class C_zoho extends CI_Controller
                 'checkIn' => $record->first_in,
                 'checkOut' => $record->last_out
             ];
-            
+
             $response = $this->Zoho_model->pushAttendance($data);
-            
+
             if (is_array($response) && isset($response[0]['response']) && $response[0]['response'] === 'success') {
                 $this->db->update('zoho_attendance_daily', [
                     'synced' => 1,
@@ -736,9 +759,9 @@ class C_zoho extends CI_Controller
                 $details[] = ['emp_id' => $record->emp_id, 'date' => $record->work_date, 'status' => 'FAILED', 'error' => $error];
             }
         }
-        
+
         log_message('info', '[PUSH_ATTENDANCE] Completed: ' . $success . ' success, ' . $failed . ' failed');
-        
+
         echo json_encode([
             'status' => 'completed',
             'date_range' => ['from' => $start_date, 'to' => $end_date],
