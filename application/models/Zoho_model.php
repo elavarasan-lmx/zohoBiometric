@@ -59,18 +59,34 @@ defined('BASEPATH') or exit('No direct script access allowed');
  */
 class Zoho_model extends CI_Model
 {
-    // Zoho API URLs
-    private $people_url = 'https://people.zoho.in';
-    private $accounts_url = 'https://accounts.zoho.in';
 
-    // OAuth Credentials - Update these with your actual values
-    private $client_id = '1000.63EWJTD201693QN46J4XDDXQLJUI9S';
-    private $client_secret = '49bda8c3de90024ad7b970d9e1abbd92d132feaf52';
-    private $refresh_token = '1000.d3f95b3cc5198fe9afa892b1268e61b1.e7478223c9ea36822532d30b702bdda0';
 
     // Runtime token storage
     private $access_token = null;
     private $token_expires = null;
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        // Load Zoho API URLs from global config
+        $this->people_url     = Globals::$zoho_people_url;
+        $this->accounts_url   = Globals::$zoho_accounts_url;
+
+        // Load Zoho credentials from global config
+        $this->client_id     = Globals::$zoho_client_id;
+        $this->client_secret = Globals::$zoho_client_secret;
+        $this->refresh_token = Globals::$zoho_refresh_token;
+
+        // SSL verification only in production
+        $this->ssl_verify = (ENVIRONMENT === 'production');
+
+        // Validate credentials early
+        if (empty($this->client_id) || empty($this->client_secret) || empty($this->refresh_token)) {
+            log_message('error', '[ZOHO] Missing OAuth credentials in global_configs.php');
+        }
+    }
+
 
     /**
      * Get valid access token (auto-refresh if expired)
@@ -101,8 +117,8 @@ class Zoho_model extends CI_Model
                 'client_secret' => $this->client_secret,
                 'grant_type' => 'refresh_token'
             ]),
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false
+            CURLOPT_SSL_VERIFYPEER => $this->ssl_verify,
+            CURLOPT_SSL_VERIFYHOST => $this->ssl_verify ? 2 : 0
         ]);
         $res = json_decode(curl_exec($ch), true);
         curl_close($ch);
@@ -147,8 +163,8 @@ class Zoho_model extends CI_Model
             CURLOPT_POSTFIELDS => $data ? json_encode($data) : null,
             CURLOPT_TIMEOUT => 60,
             CURLOPT_CONNECTTIMEOUT => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false
+            CURLOPT_SSL_VERIFYPEER => $this->ssl_verify,
+            CURLOPT_SSL_VERIFYHOST => $this->ssl_verify ? 2 : 0
         ]);
 
         $response = curl_exec($ch);
@@ -199,8 +215,8 @@ class Zoho_model extends CI_Model
             ],
             CURLOPT_TIMEOUT        => 30,
             CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false
+            CURLOPT_SSL_VERIFYPEER => $this->ssl_verify,
+            CURLOPT_SSL_VERIFYHOST => $this->ssl_verify ? 2 : 0
         ]);
 
         $res = curl_exec($ch);
@@ -261,15 +277,15 @@ class Zoho_model extends CI_Model
     {
         // Convert date format: Y-m-d to d-M-Y (e.g., 2025-12-21 to 21-Dec-2025)
         $formatted_date = DateTime::createFromFormat('Y-m-d', $date)->format('d-M-Y');
-        
+
         // Build API URL with date and format parameters
         $url = $this->people_url . '/people/api/attendance/getAttendanceEntries?date=' . $formatted_date . '&dateFormat=d-MMM-yyyy';
-        
+
         // Add employee ID filter if provided
         if ($empId) {
             $url .= '&empId=' . $empId;
         }
-        
+
         return $this->curl($url);
     }
 
@@ -327,31 +343,21 @@ class Zoho_model extends CI_Model
      */
     public function send_notification($subject, $message)
     {
-        $this->load->library('email');
-        
-        // Email configuration for Logimax Technologies
-        $mail_det = [
-            'admin_mail_server' => 'noreply@logimax.co.in',
-            'admin_mail_password' => 'ykdm rxdw wcnj gcjl',  // Gmail app password
-            'admin_mail' => 'elavarasan@logimaxindia.com',
-            'admin_company_name' => 'Logimax Technologies',
-        ];
-        
         // SMTP configuration for Gmail
         $config = [
             'protocol' => 'smtp',
             'smtp_host' => 'ssl://smtp.googlemail.com',
             'smtp_port' => 465,
-            'smtp_user' => $mail_det['admin_mail_server'],
-            'smtp_pass' => $mail_det['admin_mail_password'],
+            'smtp_user' => Globals::$admin_mail_server,
+            'smtp_pass' => Globals::$admin_mail_password,
             'mailtype' => 'html',
             'charset' => 'iso-8859-1'
         ];
 
         $this->email->initialize($config);
         $this->email->set_newline("\r\n");
-        $this->email->from($mail_det['admin_mail_server'], $mail_det['admin_company_name']);
-        $this->email->to($mail_det['admin_mail']);
+        $this->email->from(Globals::$admin_mail_server, Globals::$admin_company_name);
+        $this->email->to(Globals::$admin_mail);
         $this->email->subject($subject);
         $this->email->message($message);
 
