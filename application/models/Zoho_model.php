@@ -104,12 +104,21 @@ class Zoho_model extends CI_Model
      */
     private function token()
     {
-        // Return cached token if still valid
-        if ($this->access_token && $this->token_expires && time() < $this->token_expires) {
-            return $this->access_token;
+        $cache_file = APPPATH . 'cache/zoho_token.json';
+        
+        // 1. Try to read from cache file
+        if (file_exists($cache_file)) {
+            $cache = json_decode(file_get_contents($cache_file), true);
+            if (isset($cache['access_token']) && isset($cache['expires_at'])) {
+                // Return cached token if still valid (with 60s buffer)
+                if (time() < ($cache['expires_at'] - 60)) {
+                    $this->access_token = $cache['access_token'];
+                    return $this->access_token;
+                }
+            }
         }
 
-        // Refresh token
+        // 2. Refresh token if cache missing or expired
         $ch = curl_init($this->accounts_url . '/oauth/v2/token');
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
@@ -123,19 +132,32 @@ class Zoho_model extends CI_Model
             CURLOPT_SSL_VERIFYPEER => $this->ssl_verify,
             CURLOPT_SSL_VERIFYHOST => $this->ssl_verify ? 2 : 0
         ]);
-        $res = json_decode(curl_exec($ch), true);
+        
+        $response = curl_exec($ch);
+        $res = json_decode($response, true);
         curl_close($ch);
 
         if (isset($res['access_token'])) {
-            // Cache token in memory
-            $this->access_token = $res['access_token'];
-            $this->token_expires = time() + 3500;
+            // 3. Save new token to cache file
+            $cache_data = [
+                'access_token' => $res['access_token'],
+                'expires_at' => time() + ($res['expires_in'] ?? 3600), // Default to 1 hour if not provided
+                'generated_at' => date('Y-m-d H:i:s')
+            ];
+            
+            // Ensure cache directory exists
+            if (!is_dir(APPPATH . 'cache')) {
+                mkdir(APPPATH . 'cache', 0755, true);
+            }
+            
+            file_put_contents($cache_file, json_encode($cache_data));
 
+            $this->access_token = $res['access_token'];
             return $this->access_token;
         }
 
-        log_message('error', '[ZOHO] Token refresh failed: ' . json_encode($res));
-        return null;
+        log_message('error', '[ZOHO] Token refresh failed: ' . $response);
+        return null; // Token refresh failed
     }
 
     /**
@@ -278,18 +300,37 @@ class Zoho_model extends CI_Model
      */
     public function getAttendance($date, $empId = null)
     {
-        // Convert date format: Y-m-d to d-M-Y (e.g., 2025-12-21 to 21-Dec-2025)
-        $formatted_date = DateTime::createFromFormat('Y-m-d', $date)->format('d-M-Y');
+        // Use getUserReport instead of getAttendanceEntries for better reliability
+        $response = $this->getUserReport($date, $date, 0, $empId);
+        
+        $result = [];
+        
+        if (isset($response['result'][0])) {
+            $data = $response['result'][0];
 
-        // Build API URL with date and format parameters
-        $url = $this->people_url . '/people/api/attendance/getAttendanceEntries?date=' . $formatted_date . '&dateFormat=d-MMM-yyyy';
-
-        // Add employee ID filter if provided
-        if ($empId) {
-            $url .= '&empId=' . $empId;
+            // In User Report structure provided by user:
+            // result -> 0 -> attendanceDetails -> date -> FirstIn
+            if (isset($data['attendanceDetails'][$date])) {
+                $dayData = $data['attendanceDetails'][$date];
+                
+                $result['firstIn'] = $dayData['FirstIn'] ?? ($dayData['First In'] ?? ($dayData['First_In'] ?? '-'));
+                $result['lastOut'] = $dayData['LastOut'] ?? ($dayData['Last Out'] ?? ($dayData['Last_Out'] ?? '-'));
+                $result['totalHrs'] = $dayData['TotalHours'] ?? ($dayData['Total Hours'] ?? ($dayData['Total_Hours'] ?? '00:00'));
+                $result['status'] = $dayData['Status'] ?? ($dayData['Attendance Status'] ?? '-');
+                $result['raw'] = $dayData;
+            } else {
+                $result['firstIn'] = '-';
+                $result['lastOut'] = '-';
+                $result['status'] = 'No details for date';
+            }
+        } else {
+            // Return empty structure to indicate valid call but no data
+            $result['firstIn'] = '-';
+            $result['lastOut'] = '-';
+            $result['status'] = 'Absent/No Data';
         }
-
-        return $this->curl($url);
+        
+        return $result;
     }
 
     /**
@@ -365,5 +406,79 @@ class Zoho_model extends CI_Model
         $this->email->message($message);
 
         return $this->email->send();
+    }
+
+    /**
+     * Bulk Import Attendance to Zoho
+     * 
+     * @param array $records - Array of attendance entries
+     * Format: [['empId' => '1', 'checkIn' => '...', 'checkOut' => '...'], ...]
+     * @return array - API Response
+     */
+    public function bulkImportAttendance($records)
+    {
+        $url = $this->people_url . '/people/api/attendance/bulkImport';
+        
+        $postData = [
+            'data' => json_encode($records),
+            'dateFormat' => 'yyyy-MM-dd HH:mm:ss'
+        ];
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Zoho-oauthtoken ' . $this->token(),
+                'Content-Type: multipart/form-data' 
+            ],
+            CURLOPT_POSTFIELDS => $postData, // cURL handles multipart automatically with array
+            CURLOPT_TIMEOUT => 120, // Longer timeout for bulk operations
+            CURLOPT_SSL_VERIFYPEER => $this->ssl_verify,
+            CURLOPT_SSL_VERIFYHOST => $this->ssl_verify ? 2 : 0
+        ]);
+
+        $res = curl_exec($ch);
+        
+        if ($res === false) {
+            $error = curl_error($ch);
+            curl_close($ch);
+            return ['error' => $error];
+        }
+
+        curl_close($ch);
+        return json_decode($res, true);
+    }
+
+    /**
+     * Get User Report (Attendance) from Zoho
+     * Used for checking existing records before sync
+     * 
+     * @param string $sdate - Start Date (Y-m-d)
+     * @param string $edate - End Date (Y-m-d)
+     * @param int $startIndex - Pagination offset (0, 100, 200...)
+     * @param string $empId - Optional Employee ID filter
+     * @return array - API Response
+     */
+    public function getUserReport($sdate, $edate, $startIndex = 0, $empId = null)
+    {
+        // Convert dates to dd-MM-yyyy standard (which we know now works better for 500 errors)
+        $s_formatted = DateTime::createFromFormat('Y-m-d', $sdate)->format('d-m-Y');
+        $e_formatted = DateTime::createFromFormat('Y-m-d', $edate)->format('d-m-Y');
+        
+        $params = [
+            'sdate' => $s_formatted,
+            'edate' => $e_formatted,
+            'dateFormat' => 'dd-MM-yyyy',
+            'startIndex' => $startIndex
+        ];
+
+        if ($empId) {
+            $params['empId'] = $empId;
+        }
+
+        $url = $this->people_url . '/people/api/attendance/getUserReport?' . http_build_query($params);
+        
+        return $this->curl($url);
     }
 }

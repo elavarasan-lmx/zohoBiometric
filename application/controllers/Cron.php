@@ -34,7 +34,7 @@ class Cron extends CI_Controller
      * Schedule: Every 15 minutes
      * 
      * Process:
-     * - Fetches unsynced attendance records from daily_attendance
+     * - Fetches unsynced attendance records from zoho_attendance_daily
      * - Sends each record to Zoho People API
      * - Updates sync status and timestamps in database
      * - Logs detailed results including errors
@@ -49,10 +49,9 @@ class Cron extends CI_Controller
 
         try {
             // Get unsynced attendance records from yesterday and today
-            // Note: Uses daily_attendance table (different from C_zoho which uses zoho_attendance_daily)
             $unsynced = $this->db->where('synced', 0)
                 ->where('work_date >=', date('Y-m-d', strtotime('-1 day')))
-                ->get('daily_attendance')->result();
+                ->get('zoho_attendance_daily')->result();
 
             if (empty($unsynced)) {
                 echo "No records to sync\n";
@@ -74,8 +73,8 @@ class Cron extends CI_Controller
                 $employee_data = [
                     'empId' => $record->emp_id,
                     'date' => $record->work_date,
-                    'checkIn' => $record->check_in ?? $record->first_in ?? '09:00:00',
-                    'checkOut' => $record->check_out ?? $record->last_out ?? '18:00:00'
+                    'checkIn' => $record->first_in ?? '09:00:00',
+                    'checkOut' => $record->last_out ?? '18:00:00'
                 ];
 
                 log_message('info', '[CRON_SYNC] Sending to Zoho: Emp ' . $record->emp_id . ', Date ' . $record->work_date);
@@ -95,7 +94,7 @@ class Cron extends CI_Controller
 
                 if ($isSuccess) {
                     // Mark as synced in database
-                    $this->db->update('daily_attendance', [
+                    $this->db->update('zoho_attendance_daily', [
                         'synced' => 1,
                         'synced_at' => date('Y-m-d H:i:s')
                     ], ['id' => $record->id]);
@@ -110,8 +109,8 @@ class Cron extends CI_Controller
                     }
 
                     // Store error in database for troubleshooting
-                    $this->db->update('daily_attendance', [
-                        'sync_error' => $error
+                    $this->db->update('zoho_attendance_daily', [
+                        'last_error' => $error
                     ], ['id' => $record->id]);
 
                     $failed++;

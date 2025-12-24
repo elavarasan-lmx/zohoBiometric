@@ -1,41 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Home - Attendance</title>
+	<title>Biometric Dashboard</title>
 	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 	<link href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css" rel="stylesheet">
 	<link href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 	<style>
 		body {
 			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 			min-height: 100vh;
+            font-family: 'Roboto', sans-serif;
 		}
 
 		.stat-card {
+            background: #fff;
 			border-left: 5px solid;
 			border-radius: 12px;
 			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
 		}
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
 
-		.stat-card.employees {
-			border-left-color: #10b981;
-		}
-
-		.stat-card.present {
-			border-left-color: #3b82f6;
-		}
-
-		.stat-card.absent {
-			border-left-color: #ef4444;
-		}
-
-		.stat-card.pending {
-			border-left-color: #f59e0b;
-		}
+		.stat-card.employees { border-left-color: #10b981; }
+		.stat-card.present { border-left-color: #3b82f6; }
+		.stat-card.absent { border-left-color: #ef4444; }
+		.stat-card.pending { border-left-color: #f59e0b; }
 
 		#attendanceTable thead th {
 			background: #2563eb !important;
@@ -46,6 +42,7 @@
 		.card {
 			border: none;
 			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
 		}
 
 		.btn-load {
@@ -53,58 +50,66 @@
 			border: none;
 			font-weight: 600;
 		}
-
-		.nav-pills .nav-link {
-			color: #2563eb;
-			background: rgba(255, 255, 255, 0.9);
-			margin: 0 5px;
-		}
-
-		.nav-pills .nav-link.active {
-			background: #2563eb;
-			color: #fff;
-		}
+        
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            margin-bottom: 2rem;
+            border-radius: 0 0 1rem 1rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .btn-outline-primary {
+            color: #fff;
+            border-color: #fff;
+        }
+        .btn-outline-primary:hover {
+            background-color: #fff;
+            color: #2563eb;
+        }
 	</style>
 </head>
 
 <body>
-	<div class="container-fluid p-4">
+    
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-light py-3 px-4">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-fingerprint me-2"></i>Biometric System</a>
+            <div class="ms-auto">
+                <a href="<?= site_url('C_zoho/dashboard') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary me-2">
+                    <i class="fas fa-home me-1"></i> Dashboard
+                </a>
+                <a href="<?= site_url('C_zoho/reports') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary me-2">
+                    <i class="fas fa-file-alt me-1"></i> Reports
+                </a>
+                 <a href="<?= site_url('C_zoho/admin') ?>" class="btn btn-sm btn-primary">
+                    <i class="fas fa-cogs me-1"></i> Admin Panel
+                </a>
+            </div>
+        </div>
+    </nav>
+
+	<div class="container-fluid px-4">
+		<!-- Filter Section -->
 		<div class="row mb-4">
 			<div class="col-12">
 				<div class="card bg-white">
-					<div class="card-body py-3">
-						<div class="d-flex justify-content-between align-items-center">
-							<h3 class="mb-0"><i class="fas fa-chart-line me-2 text-primary"></i>Attendance System</h3>
-							<ul class="nav nav-pills">
-								<li class="nav-item"><a class="nav-link active" href="<?= site_url('C_zoho/home') ?>">Home</a></li>
-								<li class="nav-item"><a class="nav-link" href="<?= site_url('C_zoho/reports') ?>">Reports</a></li>
-							</ul>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="row mb-4">
-			<div class="col-12">
-				<div class="card">
 					<div class="card-body">
-						<div class="row g-3">
+						<div class="row g-3 align-items-end">
 							<div class="col-md-3">
-								<label class="form-label fw-bold"><i class="fas fa-calendar-alt me-1"></i>Date</label>
+								<label class="form-label fw-bold">Select Date</label>
 								<input type="date" id="date" class="form-control" value="<?= date('Y-m-d') ?>">
 							</div>
-							<div class="col-md-1">
-								<label class="form-label fw-bold">&nbsp;</label>
+							<div class="col-md-2">
 								<button type="button" id="btnLoad" class="btn btn-load w-100 text-white">
-									<i class="fas fa-sync-alt me-2"></i>Load
+									<i class="fas fa-sync-alt me-2"></i>Load Data
 								</button>
 							</div>
-							<div class="col-md-4">
-								<label class="form-label fw-bold">Quick Filters</label>
-								<div class="btn-group w-100">
-									<button type="button" class="btn btn-outline-primary" data-range="today">Today</button>
-									<button type="button" class="btn btn-outline-primary" data-range="yesterday">Yesterday</button>
+							<div class="col-md-4 ms-auto text-end">
+                                <label class="form-label fw-bold d-block">Quick Select</label>
+								<div class="btn-group">
+									<button type="button" class="btn btn-secondary" data-range="today">Today</button>
+									<button type="button" class="btn btn-secondary" data-range="yesterday">Yesterday</button>
 								</div>
 							</div>
 						</div>
@@ -113,6 +118,7 @@
 			</div>
 		</div>
 
+		<!-- Statistics -->
 		<div class="row mb-4">
 			<div class="col-md-3 mb-3">
 				<div class="card stat-card employees h-100">
@@ -153,6 +159,7 @@
 			</div>
 		</div>
 
+        <!-- Data Table -->
 		<div class="row">
 			<div class="col-12">
 				<div class="card">
@@ -160,13 +167,13 @@
 						<table id="attendanceTable" class="table table-striped w-100">
 							<thead>
 								<tr>
-									<th><i class="fas fa-id-badge me-1"></i>Emp ID</th>
-									<th><i class="fas fa-user me-1"></i>Employee</th>
-									<th><i class="fas fa-calendar me-1"></i>Date</th>
-									<th><i class="fas fa-sign-in-alt me-1"></i>First In</th>
-									<th><i class="fas fa-sign-out-alt me-1"></i>Last Out</th>
-									<th><i class="fas fa-clock me-1"></i>Hours</th>
-									<th><i class="fas fa-info-circle me-1"></i>Status</th>
+									<th>Emp ID</th>
+									<th>Employee Name</th>
+									<th>Date</th>
+									<th>In Time</th>
+									<th>Out Time</th>
+									<th>Hours</th>
+									<th>Status</th>
 								</tr>
 							</thead>
 							<tbody></tbody>
@@ -250,10 +257,9 @@
 				});
 
 				table.clear().rows.add(rows).draw();
-				$('#btnLoad').prop('disabled', false).html('<i class="fas fa-sync-alt me-2"></i>Load');
+				$('#btnLoad').prop('disabled', false).html('<i class="fas fa-sync-alt me-2"></i>Load Data');
 			});
 		}
 	</script>
 </body>
-
 </html>

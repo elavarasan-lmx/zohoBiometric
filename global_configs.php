@@ -42,23 +42,32 @@ class Globals
 	   Zoho URLs
 	   ========================= */
 
-	public static $zoho_people_url   = 'https://people.zoho.in';
-	public static $zoho_accounts_url = 'https://accounts.zoho.in';
+	public static $zoho_people_url   = 'https://people.zoho.in';  // Zoho People URL
+	public static $zoho_accounts_url = 'https://accounts.zoho.in';  // Zoho Accounts URL
 
 	/* =========================
        Zoho OAuth (placeholders)
        ========================= */
-	public static $zoho_client_id     = '1000.63EWJTD201693QN46J4XDDXQLJUI9S';
-	public static $zoho_client_secret = '49bda8c3de90024ad7b970d9e1abbd92d132feaf52';
-	public static $zoho_refresh_token = '1000.d3f95b3cc5198fe9afa892b1268e61b1.e7478223c9ea36822532d30b702bdda0';
+	public static $zoho_client_id     = '1000.63EWJTD201693QN46J4XDDXQLJUI9S';   // Zoho OAuth Client ID
+	public static $zoho_client_secret = '49bda8c3de90024ad7b970d9e1abbd92d132feaf52';   // Zoho OAuth Client Secret
+	public static $zoho_refresh_token = '1000.d3f95b3cc5198fe9afa892b1268e61b1.e7478223c9ea36822532d30b702bdda0';  // Zoho OAuth Refresh Token
 
 	/* =========================
        Mail credentials
        ========================= */
-	public static $admin_mail = 'elavarasan@logimaxindia.com';
-	public static $admin_mail_server = 'noreply@logimax.co.in';
+	public static $admin_mail = 'elavarasan@logimaxindia.com';  // Admin email address
+	public static $admin_mail_server = 'noreply@logimax.co.in';    // Admin email server
 	public static $admin_mail_password = 'ykdm rxdw wcnj gcjl';  // Gmail app password
-	public static $admin_company_name = 'Logimax Technologies';
+	public static $admin_company_name = 'Logimax Technologies';  // Company name for emails
+
+	/* =========================
+	   ZKTeco BioTime API Configuration
+	   ========================= */
+
+	public static $zkteco_base_url = 'http://127.0.0.1:8081'; // easyTime Pro server URL
+	public static $zkteco_username = 'admin';                // easyTime Pro admin username
+	public static $zkteco_password = 'Esan9080!';  			// easyTime Pro admin password
+
 }
 
 
