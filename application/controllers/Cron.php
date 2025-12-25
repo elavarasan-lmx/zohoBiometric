@@ -123,12 +123,15 @@ class Cron extends CI_Controller
 
             log_message('info', '[CRON_SYNC] Completed: ' . $success . ' success, ' . $failed . ' failed');
 
-            // Send notification if there are failures
-            if ($failed > 0) {
-                $this->Zoho_model->send_notification(
-                    'Attendance Sync Alert',
-                    "Sync completed with $failed failures out of " . ($success + $failed) . " records"
-                );
+            // Send notification
+            if ($success > 0 || $failed > 0) {
+                $this->Zoho_model->send_attendance_report([
+                    'total' => $success + $failed,
+                    'imported' => $success,
+                    'errors' => $failed,
+                    'start_date' => date('Y-m-d', strtotime('-1 day')),
+                    'end_date' => date('Y-m-d')
+                ]);
             }
         } catch (Exception $e) {
             echo "Error: " . $e->getMessage() . "\n";
@@ -168,23 +171,27 @@ class Cron extends CI_Controller
         }
 
         $updated = 0;
-        foreach ($employees['response']['result'] as $emp) {
-            // Use REPLACE to insert new or update existing employee records
-            // REPLACE = DELETE + INSERT if record exists, otherwise just INSERT
-            $this->db->replace('zoho_employees', [
-                'emp_id' => $emp['Employee_ID'],
-                'name' => $emp['Display_Name'],
-                'email' => $emp['Email_ID'] ?? null,
-                'department' => $emp['Department'] ?? null,
-                'designation' => $emp['Designation'] ?? null,
-                'status' => $emp['Employee_Status'] ?? 'Active',
-                'updated_at' => date('Y-m-d H:i:s')
-            ]);
-            $updated++;
+        foreach ($employees['response']['result'] as $group) {
+            foreach ($group as $empWrapper) {
+                $emp = (isset($empWrapper[0]) && is_array($empWrapper[0])) ? $empWrapper[0] : $empWrapper;
+                if (empty($emp['EmployeeID'])) continue;
+
+                $this->db->replace('zoho_employees', [
+                    'emp_id' => $emp['EmployeeID'],
+                    'name' => trim(($emp['FirstName'] ?? '') . ' ' . ($emp['LastName'] ?? '')),
+                    'email' => $emp['EmailID'] ?? null,
+                    'department' => $emp['Department'] ?? null,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ]);
+                $updated++;
+            }
         }
 
         echo "Employee sync completed: $updated employees updated\n";
 
         log_message('info', '[EMPLOYEE_SYNC] Completed: ' . $updated . ' employees updated');
+
+        // Send Email Report
+        $this->Zoho_model->send_simple_report("Automated Employee Sync", ['employees_updated' => $updated]);
     }
 }

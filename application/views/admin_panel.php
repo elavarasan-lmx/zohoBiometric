@@ -8,10 +8,13 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Select2 -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
     <style>
         body {
@@ -100,7 +103,7 @@
         <div class="card mb-4">
             <div class="card-body">
                 <div class="row align-items-end">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                          <label class="form-label fw-bold text-muted text-uppercase small">Operation Date Range</label>
                          <div class="input-group">
                             <span class="input-group-text bg-light border-end-0">From</span>
@@ -109,7 +112,13 @@
                             <input type="date" id="to_date" value="<?php echo date('Y-m-d'); ?>" class="form-control border-start-0">
                          </div>
                     </div>
-                    <div class="col-md-8">
+                    <div class="col-md-4">
+                         <label class="form-label fw-bold text-muted text-uppercase small">Filter By Employee (Optional)</label>
+                         <select id="emp_id" class="form-control">
+                            <option value="">All Employees</option>
+                         </select>
+                    </div>
+                    <div class="col-md-4">
                         <div id="status-box" class="alert alert-info d-none mb-0 d-flex align-items-center py-2">
                             <i id="status-icon" class="fas fa-info-circle me-2"></i>
                             <span id="status-message" class="fw-medium">Ready</span>
@@ -275,6 +284,23 @@
     <script>
         const baseUrl = '<?php echo site_url("C_zoho/"); ?>';
 
+        $(document).ready(function() {
+            $('#emp_id').select2({
+                placeholder: 'Select Employee (Optional)',
+                allowClear: true,
+                width: '100%'
+            });
+
+            // Load Employees
+            $.get(baseUrl + 'get_employees', function(data) {
+                if(data.employees) {
+                    data.employees.forEach(emp => {
+                        $('#emp_id').append(new Option(emp.name + ' (' + emp.emp_id + ')', emp.emp_id));
+                    });
+                }
+            });
+        });
+
         function log(msg, type = 'info') {
             const timestamp = new Date().toLocaleTimeString();
             let color = '#00ff00'; // green for info
@@ -319,6 +345,7 @@
         function runAction(action) {
             const from = $('#from_date').val();
             const to = $('#to_date').val();
+            const empId = $('#emp_id').val();
             
             if (!from || !to) {
                 alert('Please select both From and To dates');
@@ -326,7 +353,9 @@
             }
 
             setStatus(true, 'Running ' + action + '...');
-            log('Starting ' + action + ' for range: ' + from + ' to ' + to + '...', 'info');
+            let logMsg = 'Starting ' + action + ' for range: ' + from + ' to ' + to;
+            if (empId) logMsg += ' | Employee: ' + empId;
+            log(logMsg + '...', 'info');
 
             $.ajax({
                 url: baseUrl + action,
@@ -334,7 +363,8 @@
                 data: { 
                     from: from, 
                     to: to,
-                    date: to // Fallback for single-date functions
+                    date: to, // Fallback for single-date functions
+                    empId: empId 
                 },
                 dataType: 'json',
                 success: function(response) {

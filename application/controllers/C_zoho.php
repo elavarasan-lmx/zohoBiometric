@@ -101,16 +101,50 @@ class C_zoho extends CI_Controller
 	public function check_raw_data()
 	{
 		$date = $this->input->get('date') ?: date('Y-m-d');
-
 		$count = $this->db->where('work_date', $date)->count_all_results('zoho_attendance_raw');
-		$data = $this->db->where('work_date', $date)->limit(10)->get('zoho_attendance_raw')->result();
+		echo json_encode(['status' => 'success', 'date' => $date, 'count' => $count]);
+	}
 
-		echo json_encode([
-			'date' => $date,
-			'total_punches' => $count,
-			'sample_data' => $data,
-			'message' => $count > 0 ? 'Data available! Use process_local_attendance' : 'No data found for this date'
-		]);
+	/**
+	 * Update attendance record (Manual Override)
+	 * URL: POST /C_zoho/update_attendance
+	 */
+	public function update_attendance()
+	{
+		$emp_id = $this->input->post('emp_id');
+		$work_date = $this->input->post('work_date');
+		$first_in = $this->input->post('first_in');
+		$last_out = $this->input->post('last_out');
+
+		if (!$emp_id || !$work_date || !$first_in || !$last_out) {
+			echo json_encode(['status' => 'error', 'message' => 'Missing required fields']);
+			return;
+		}
+
+		// Normalize times
+		$first_in = date('H:i:s', strtotime($first_in));
+		$last_out = date('H:i:s', strtotime($last_out));
+
+		// Check if record exists
+		$existing = $this->db->where(['emp_id' => $emp_id, 'work_date' => $work_date])->get('zoho_attendance_daily')->row();
+
+		$data = [
+			'first_in' => $first_in,
+			'last_out' => $last_out,
+			'synced' => 0, // Reset sync status for re-push
+			'updated_at' => date('Y-m-d H:i:s'),
+			'last_error' => 'Manual Override'
+		];
+
+		if ($existing) {
+			$this->db->update('zoho_attendance_daily', $data, ['id' => $existing->id]);
+		} else {
+			$data['emp_id'] = $emp_id;
+			$data['work_date'] = $work_date;
+			$this->db->insert('zoho_attendance_daily', $data);
+		}
+
+		echo json_encode(['status' => 'success', 'message' => 'Attendance updated successfully. It is now marked as PENDING for sync.']);
 	}
 
 	/**
@@ -145,11 +179,12 @@ class C_zoho extends CI_Controller
 		$zk_password = Globals::$zkteco_password;
 
 		// Step 1: Get authentication token
-		$token = $this->get_zkteco_token($zk_base_url, $zk_username, $zk_password);
-		if (!$token) {
-			echo json_encode(['status' => 'error', 'message' => 'Failed to authenticate with ZKTeco']);
+		$authRes = $this->get_zkteco_token($zk_base_url, $zk_username, $zk_password);
+		if (!$authRes['success']) {
+			echo json_encode(['status' => 'error', 'message' => 'Auth Failed: ' . $authRes['message']]);
 			return;
 		}
+		$token = $authRes['token'];
 
 		// Step 2: Fetch transactions
 		$imported = 0;
@@ -158,11 +193,21 @@ class C_zoho extends CI_Controller
 
 		$ch = curl_init($url);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Token ' . $token]);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $this->get_zkteco_headers($token));
 		$response = curl_exec($ch);
+		
+		if (curl_errno($ch)) {
+			log_message('error', '[ZKTECO_FETCH] cURL Error: ' . curl_error($ch));
+		}
+		
 		curl_close($ch);
 
 		$data = json_decode($response, true);
+		
+		if (empty($data)) {
+			log_message('error', "[ZKTECO_FETCH] Empty or invalid JSON response: " . substr($response, 0, 500));
+		}
 
 		if (isset($data['data'])) {
 			foreach ($data['data'] as $transaction) {
@@ -191,26 +236,101 @@ class C_zoho extends CI_Controller
 		// Step 3: Process into daily attendance
 		$this->process_to_daily($start_date, $end_date);
 
-		echo json_encode([
-			'status' => 'completed',
-			'date_range' => ['from' => $start_date, 'to' => $end_date],
-			'summary' => ['imported' => $imported, 'message' => 'Data imported and processed']
-		]);
-	}
+		$summary = ['imported' => $imported, 'message' => 'Data imported and processed'];
+
+	// Send Email Report
+	$this->Zoho_model->send_simple_report("ZKTeco Device Log Import", [
+		'date_range' => $start_date . ' to ' . $end_date,
+		'imported_logs' => $imported
+	]);
+
+	echo json_encode([
+		'status' => 'completed',
+		'date_range' => ['from' => $start_date, 'to' => $end_date],
+		'summary' => $summary
+	]);
+}
 
 	private function get_zkteco_token($base_url, $username, $password)
 	{
-		$url = $base_url . '/api-token-auth/';
+		$url = rtrim($base_url, '/') . '/api-token-auth/';
 		$ch = curl_init($url);
+		
+		$postFields = [
+			'username' => $username,
+			'password' => $password
+		];
+
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['username' => $username, 'password' => $password]));
-		curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $this->get_zkteco_headers(null, 'application/x-www-form-urlencoded'));
+		
 		$response = curl_exec($ch);
+		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+		if (curl_errno($ch)) {
+			$curlError = curl_error($ch);
+			log_message('error', '[ZKTECO_AUTH] cURL Error: ' . $curlError);
+			curl_close($ch);
+			return ['success' => false, 'message' => "Connection Error: $curlError"];
+		}
+
 		curl_close($ch);
 
+		if (empty($response)) {
+			log_message('error', "[ZKTECO_AUTH] Empty response. HTTP Code: $httpCode");
+			return ['success' => false, 'message' => "Empty response from server (HTTP $httpCode)"];
+		}
+
 		$data = json_decode($response, true);
-		return $data['token'] ?? null;
+		
+		if (!isset($data['token'])) {
+			// Save full response for developer to see in logs
+			log_message('error', "[ZKTECO_AUTH] Failed. Code: $httpCode. Raw Response: >>" . $response . "<<");
+			
+			$preview = is_array($data) ? json_encode($data) : substr(strip_tags($response), 0, 100);
+			return [
+				'success' => false, 
+				'message' => "Invalid response (HTTP $httpCode). " . ($preview ?: "No body returned from server")
+			];
+		}
+
+		return ['success' => true, 'token' => $data['token']];
+	}
+
+	/**
+	 * Build ZKTeco API Headers dynamically
+	 */
+	private function get_zkteco_headers($token = null, $contentType = 'application/json')
+	{
+		$headers = [
+			'User-Agent: Mozilla/5.0'
+		];
+
+		if ($contentType) {
+			$headers[] = 'Content-Type: ' . $contentType;
+			$headers[] = 'Accept: application/json';
+		}
+
+		if ($token) {
+			$headers[] = 'Authorization: Token ' . $token;
+		}
+
+		// Add bypass headers only if using a tunnel
+		$baseUrl = Globals::$zkteco_base_url;
+		if (stripos($baseUrl, 'ngrok') !== false || stripos($baseUrl, 'loca.lt') !== false) {
+			$headers[] = 'Bypass-Tunnel-Reminder: true';
+			$headers[] = 'ngrok-skip-browser-warning: 1';
+			
+			// Only add spoofing headers for tunnels if absolutely needed, 
+			// but for now let's try WITHOUT them to see if it fixes the 400
+			// $headers[] = 'X-Forwarded-Host: localhost';
+			// $headers[] = 'X-Forwarded-For: 127.0.0.1';
+		}
+
+		return $headers;
 	}
 
 	private function process_to_daily($start_date, $end_date)
@@ -399,20 +519,22 @@ class C_zoho extends CI_Controller
 			}
 		}
 
-		log_message(
-			'info',
-			'[EMPLOYEE_SYNC] Completed: ' . $imported . ' imported, ' . $updated . ' updated'
-		);
+		$summary = [
+		'imported'        => $imported,
+		'updated'         => $updated,
+		'total_processed' => $imported + $updated
+	];
 
-		echo json_encode([
-			'status'  => 'completed',
-			'summary' => [
-				'imported'        => $imported,
-				'updated'         => $updated,
-				'total_processed' => $imported + $updated
-			]
-		]);
-	}
+	log_message('info', '[EMPLOYEE_SYNC] Completed: ' . $imported . ' imported, ' . $updated . ' updated');
+
+	// Send Email Report
+	$this->Zoho_model->send_simple_report("Employee Master Sync Completed", $summary);
+
+	echo json_encode([
+		'status'  => 'completed',
+		'summary' => $summary
+	]);
+}
 
 
 
@@ -528,23 +650,28 @@ class C_zoho extends CI_Controller
 
 		log_message('info', '[ZOHO_SYNC] Completed for ' . $date . ': ' . $success . ' success, ' . $failed . ' failed');
 
-		// Send notification if there are failures
-		if ($failed > 0) {
-			$this->Zoho_model->send_notification(
-				"Zoho Sync Alert - $date",
-				"Attendance sync completed: $success success, $failed failed out of " . count($records) . " records"
-			);
-		}
+		$summary = [
+		'start_date' => $date,
+		'end_date' => $date,
+		'total' => count($records),
+		'imported' => $success,
+		'updated' => 0,
+		'skipped' => 0,
+		'errors' => $failed
+	];
 
-		echo json_encode([
-			'status' => 'completed',
-			'date' => $date,
-			'total' => count($records),
-			'success' => $success,
-			'failed' => $failed,
-			'details' => $sync_details
-		]);
+	// Send Email Report
+	if (count($records) > 0) {
+		$this->Zoho_model->send_attendance_report($summary);
 	}
+
+	echo json_encode([
+		'status' => 'completed',
+		'date' => $date,
+		'summary' => $summary,
+		'details' => $sync_details
+	]);
+}
 
 	/**
 	 * Attendance dashboard with date range support
@@ -721,6 +848,19 @@ class C_zoho extends CI_Controller
 
 		log_message('info', '[ZOHO_IMPORT] Completed for empId ' . $empId . ': ' . $imported . ' imported, ' . $updated . ' updated, ' . $errors . ' errors');
 
+		$summary = [
+			'start_date' => $start_date,
+			'end_date' => $end_date,
+			'total' => $imported + $updated + $errors,
+			'imported' => $imported,
+			'updated' => $updated,
+			'skipped' => 0,
+			'errors' => $errors
+		];
+
+		// Send Email Report
+		$this->Zoho_model->send_attendance_report($summary);
+
 		echo json_encode([
 			'status' => 'completed',
 			'date_range' => [
@@ -728,12 +868,6 @@ class C_zoho extends CI_Controller
 				'to' => $end_date
 			],
 			'employee_id' => $empId,
-			'summary' => [
-				'imported' => $imported,
-				'updated' => $updated,
-				'errors' => $errors,
-				'total_processed' => $imported + $updated
-			],
 			'details' => $details
 		]);
 	}
@@ -867,7 +1001,7 @@ class C_zoho extends CI_Controller
     ];
 
     // Send Mail Report
-    $this->send_sync_report($summary);
+    $this->Zoho_model->send_attendance_report($summary);
 
 	echo json_encode([
 		'status' => 'completed',
@@ -875,26 +1009,6 @@ class C_zoho extends CI_Controller
         'details' => count($log_details) > 0 ? array_slice($log_details, 0, 100) : []
 	], JSON_PRETTY_PRINT);
 }
-
-/**
- * Helper to send sync report via email
- */
-private function send_sync_report($s)
-{
-    $subject = "Zoho Attendance Sync Report: " . $s['start_date'] . " to " . $s['end_date'];
-    $message = "<h2>Zoho Attendance Sync Completed</h2>";
-    $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse;'>";
-    $message .= "<tr><td><b>Period</b></td><td>{$s['start_date']} to {$s['end_date']}</td></tr>";
-    $message .= "<tr><td><b>Total Records</b></td><td>{$s['total']}</td></tr>";
-    $message .= "<tr><td><b style='color: green;'>Imported (New)</b></td><td>{$s['imported']}</td></tr>";
-    $message .= "<tr><td><b style='color: blue;'>Updated (Existing)</b></td><td>{$s['updated']}</td></tr>";
-    $message .= "<tr><td><b style='color: orange;'>Skipped (Absent)</b></td><td>{$s['skipped']}</td></tr>";
-    $message .= "<tr><td><b style='color: red;'>Errors</b></td><td>{$s['errors']}</td></tr>";
-    $message .= "</table>";
-    $message .= "<p>Date: " . date('Y-m-d H:i:s') . "</p>";
-
-    return $this->Zoho_model->send_notification($subject, $message);
-}	
 
 	/**
 	 * Clean up future date records and invalid attendance data
@@ -920,16 +1034,21 @@ private function send_sync_report($s)
 
 		log_message('info', '[CLEANUP] Deleted ' . $future_deleted . ' future records and ' . $placeholder_deleted . ' placeholder records');
 
-		echo '<pre>' . json_encode([
-			'status' => 'completed',
-			'cleanup_date' => $today,
-			'summary' => [
-				'future_records_deleted' => $future_deleted,
-				'placeholder_records_deleted' => $placeholder_deleted,
-				'total_deleted' => $future_deleted + $placeholder_deleted
-			]
-		], JSON_PRETTY_PRINT) . '</pre>';
-	}
+		$summary = [
+		'future_records_deleted' => $future_deleted,
+		'placeholder_records_deleted' => $placeholder_deleted,
+		'total_deleted' => $future_deleted + $placeholder_deleted
+	];
+
+	// Send Email Report
+	$this->Zoho_model->send_simple_report("Database Cleanup Performed", $summary);
+
+	echo json_encode([
+		'status' => 'completed',
+		'cleanup_date' => $today,
+		'summary' => $summary
+	], JSON_PRETTY_PRINT);
+}
 
 	/**
 	 * Push attendance to Zoho People
@@ -1010,13 +1129,27 @@ private function send_sync_report($s)
 
 		log_message('info', '[PUSH_ATTENDANCE] Completed: ' . $success . ' success, ' . $failed . ' failed');
 
-		echo json_encode([
-			'status' => 'completed',
-			'date_range' => ['from' => $start_date, 'to' => $end_date],
-			'summary' => ['total' => count($records), 'success' => $success, 'failed' => $failed],
-			'details' => $details
-		]);
+	$summary = ['total' => count($records), 'success' => $success, 'failed' => $failed];
+
+	// Send Email Report (only if something happened)
+	if (count($records) > 0) {
+		$this->Zoho_model->send_attendance_report(array_merge($summary, [
+			'start_date' => $start_date,
+			'end_date' => $end_date,
+			'imported' => $success, // Mapping for unified format
+			'updated' => 0,
+			'skipped' => 0,
+			'errors' => $failed
+		]));
 	}
+
+	echo json_encode([
+		'status' => 'completed',
+		'date_range' => ['from' => $start_date, 'to' => $end_date],
+		'summary' => $summary,
+		'details' => $details
+	]);
+}
 	/**
 	 * Import employees from ZKTeco API to local database
 	 * URL: GET /C_zoho/import_zkteco_employees
@@ -1066,7 +1199,16 @@ private function send_sync_report($s)
 				$imported++;
 			}
 		}
-		echo json_encode(['status' => 'completed', 'imported' => $imported]);
+
+		$summary = ['imported' => $imported, 'total' => count($result['data'] ?? [])];
+
+		// Send Email Report
+		$this->Zoho_model->send_simple_report("ZKTeco Employee Import", $summary);
+
+		echo json_encode([
+			'status' => 'completed',
+			'summary' => $summary
+		]);
 	}
 
 	/**
@@ -1082,6 +1224,7 @@ private function send_sync_report($s)
 		$date = $this->input->get('date');
 		$from = $this->input->get('from');
 		$to = $this->input->get('to');
+		$empIdFilter = $this->input->get('empId');
 
 		// Determine date range or default to today
 		if ($from && $to) {
@@ -1098,6 +1241,11 @@ private function send_sync_report($s)
 		$this->db->where('synced', 0);
         $this->db->where('work_date >=', $start_date);
         $this->db->where('work_date <=', $end_date);
+		
+		if ($empIdFilter) {
+			$this->db->where('emp_id', $empIdFilter);
+		}
+		
         $records = $this->db->get('zoho_attendance_daily')->result();
 
 		if (empty($records)) {
@@ -1252,14 +1400,23 @@ private function send_sync_report($s)
              $status = 'error';
         }
 
-		echo json_encode([
-			'status' => $status,
-			'message' => $msg,
-			'summary' => [
-				'pushed' => $pushed_count,
-                'skipped_duplicate' => $skipped_count,
-                'errors' => count($errors)
-			]
-		]);
-	}
+    $summary_data = [
+        'start_date' => $start_date,
+        'end_date' => $end_date,
+        'imported' => $pushed_count,
+        'updated' => 0,
+        'skipped' => $skipped_count,
+        'errors' => count($errors),
+        'total' => $pushed_count + $skipped_count
+    ];
+
+    // Send Mail Report
+    $this->Zoho_model->send_attendance_report($summary_data);
+
+	echo json_encode([
+		'status' => $status,
+		'message' => $msg,
+		'summary' => $summary_data
+	]);
+}
 }

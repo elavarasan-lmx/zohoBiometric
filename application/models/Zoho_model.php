@@ -481,4 +481,42 @@ class Zoho_model extends CI_Model
         
         return $this->curl($url);
     }
+
+    /**
+     * Helper to send any sync report via email
+     */
+    public function send_simple_report($title, $stats)
+    {
+        $subject = "Sync Alert: " . $title . " [" . date('Y-m-d') . "]";
+        $message = "<h2>$title</h2>";
+        $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse;'>";
+        foreach ($stats as $key => $val) {
+            $label = ucwords(str_replace(['_', '-'], ' ', $key));
+            $message .= "<tr><td><b>$label</b></td><td>$val</td></tr>";
+        }
+        $message .= "</table>";
+        $message .= "<p>Generated at: " . date('Y-m-d H:i:s') . "</p>";
+
+        return $this->send_notification($subject, $message);
+    }
+
+    /**
+     * Helper to send attendance sync report via email (Unified Format)
+     */
+    public function send_attendance_report($s)
+    {
+        $subject = "Zoho Attendance Sync Report: " . ($s['start_date'] ?? date('Y-m-d')) . " to " . ($s['end_date'] ?? date('Y-m-d'));
+        $message = "<h2>Zoho Attendance Sync Completed</h2>";
+        $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse;'>";
+        $message .= "<tr><td><b>Period</b></td><td>" . ($s['start_date'] ?? '-') . " to " . ($s['end_date'] ?? '-') . "</td></tr>";
+        $message .= "<tr><td><b>Total Records</b></td><td>" . ($s['total'] ?? 0) . "</td></tr>";
+        $message .= "<tr><td><b style='color: green;'>Imported (New)</b></td><td>" . ($s['imported'] ?? 0) . "</td></tr>";
+        $message .= "<tr><td><b style='color: blue;'>Updated (Existing)</b></td><td>" . ($s['updated'] ?? 0) . "</td></tr>";
+        $message .= "<tr><td><b style='color: orange;'>Skipped (Absent)</b></td><td>" . ($s['skipped'] ?? 0) . "</td></tr>";
+        $message .= "<tr><td><b style='color: red;'>Errors</b></td><td>" . ($s['errors'] ?? 0) . "</td></tr>";
+        $message .= "</table>";
+        $message .= "<p>Date: " . date('Y-m-d H:i:s') . "</p>";
+
+        return $this->send_notification($subject, $message);
+    }
 }

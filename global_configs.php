@@ -31,7 +31,7 @@ class Globals
 	public static $hostname = "ls-ed7d20aed62ced9021416fc1faa405d4b4711541.ckx0j1c4rlnl.ap-south-1.rds.amazonaws.com";
 	public static $username = "demotrade";
 	public static $password = "logimax*987";
-	public static $database = "winbullSource";
+	public static $database = "zoho";
 
 	/* =========================
        Timezone
@@ -64,7 +64,8 @@ class Globals
 	   ZKTeco BioTime API Configuration
 	   ========================= */
 
-	public static $zkteco_base_url = 'http://127.0.0.1:8081'; // easyTime Pro server URL
+	// public static $zkteco_base_url = 'http://127.0.0.1:8081'; // easyTime Pro server URL
+	public static $zkteco_base_url = 'http://10.102.133.27:8081'; // local easyTime Pro server URL
 	public static $zkteco_username = 'admin';                // easyTime Pro admin username
 	public static $zkteco_password = 'Esan9080!';  			// easyTime Pro admin password
 

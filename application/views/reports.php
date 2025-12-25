@@ -152,15 +152,59 @@
 							<thead>
 								<tr>
 									<th>Date</th>
-									<th>First In</th>
-									<th>Last Out</th>
+									<th>In Time</th>
+									<th>Out Time</th>
 									<th>Hours</th>
 									<th>Status</th>
+									<th>Actions</th>
 								</tr>
 							</thead>
 							<tbody></tbody>
 						</table>
 					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+    <!-- Edit Attendance Modal -->
+	<div class="modal fade" id="editModal" tabindex="-1">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title fw-bold">Edit Attendance</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+				</div>
+				<div class="modal-body">
+					<form id="editForm">
+						<input type="hidden" id="edit_emp_id">
+						<input type="hidden" id="edit_date">
+						<div class="mb-3">
+							<label class="form-label fw-bold">Employee</label>
+							<input type="text" id="edit_emp_name" class="form-control" readonly style="background: #f8f9fa;">
+						</div>
+						<div class="mb-3">
+							<label class="form-label fw-bold">Date</label>
+							<input type="text" id="edit_date_display" class="form-control" readonly style="background: #f8f9fa;">
+						</div>
+						<div class="row">
+							<div class="col-md-6 mb-3">
+								<label class="form-label fw-bold">First In</label>
+								<input type="time" id="edit_first_in" class="form-control" step="1">
+							</div>
+							<div class="col-md-6 mb-3">
+								<label class="form-label fw-bold">Last Out</label>
+								<input type="time" id="edit_last_out" class="form-control" step="1">
+							</div>
+						</div>
+                        <div class="alert alert-warning py-2 small mb-0">
+                            <i class="fas fa-info-circle me-1"></i> Saving will mark this record as <b>Pending</b> for sync.
+                        </div>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" id="btnSaveEdit" class="btn btn-primary">Save Changes</button>
 				</div>
 			</div>
 		</div>
@@ -195,6 +239,7 @@
 	<script>
 		const API_URL = "<?= site_url('C_zoho/dashboard_api') ?>";
 		const EMP_API_URL = "<?= site_url('C_zoho/get_employees') ?>";
+		const UPDATE_URL = "<?= site_url('C_zoho/update_attendance') ?>";
 		let reportTable, detailTable, allData = [];
 
 		$(document).ready(function() {
@@ -251,6 +296,39 @@
 				$('#detailReport').hide();
 				$('#monthlyReport').show();
 			});
+
+            $('#detailTable').on('click', '.btn-edit', function() {
+                const data = $(this).data();
+                $('#edit_emp_id').val(data.empid);
+                $('#edit_emp_name').val(data.empname);
+                $('#edit_date').val(data.date);
+                $('#edit_date_display').val(data.date);
+                $('#edit_first_in').val(data.in === '-' ? '' : data.in);
+                $('#edit_last_out').val(data.out === '-' ? '' : data.out);
+                new bootstrap.Modal('#editModal').show();
+            });
+
+            $('#btnSaveEdit').on('click', function() {
+                const formData = {
+                    emp_id: $('#edit_emp_id').val(),
+                    work_date: $('#edit_date').val(),
+                    first_in: $('#edit_first_in').val(),
+                    last_out: $('#edit_last_out').val()
+                };
+
+                $('#btnSaveEdit').prop('disabled', true).text('Saving...');
+
+                $.post(UPDATE_URL, formData, function(res) {
+                    $('#btnSaveEdit').prop('disabled', false).text('Save Changes');
+                    if (res.status === 'success') {
+                        bootstrap.Modal.getInstance('#editModal').hide();
+                        alert(res.message);
+                        loadReport(); // Reload to show updated times
+                    } else {
+                        alert('Error: ' + res.message);
+                    }
+                }, 'json');
+            });
 		});
 
 		function loadReport() {
@@ -329,7 +407,17 @@
 				}
 
 				const status = isPresent ? '<span class="badge bg-success">Present</span>' : '<span class="badge bg-danger">Absent</span>';
-				rows.push([d.work_date, d.first_in || '-', d.last_out || '-', hours, status]);
+				
+                const editBtn = `<button class="btn btn-sm btn-outline-primary btn-edit" 
+                    data-empid="${d.emp_id}" 
+                    data-empname="${d.name || d.emp_id}" 
+                    data-date="${d.work_date}" 
+                    data-in="${d.first_in || '-'}" 
+                    data-out="${d.last_out || '-'}">
+                    <i class="fas fa-edit"></i>
+                </button>`;
+
+                rows.push([d.work_date, d.first_in || '-', d.last_out || '-', hours, status, editBtn]);
 			});
 
 			// If empName has extra ID info, clean it
