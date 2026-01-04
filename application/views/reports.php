@@ -50,7 +50,27 @@
 		.emp-id-link { cursor: pointer; color: #2563eb; text-decoration: none; font-weight: 500; }
 		.emp-id-link:hover { text-decoration: underline; }
 		.modal-body { max-height: 500px; overflow-y: auto; }
+
+		/* New Professional Styles */
+		.report-card-stat {
+			border: none;
+			border-radius: 12px;
+			transition: none; /* No animations as per previous request */
+			background: #fff;
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+		}
+		.stat-label { font-size: 0.85rem; font-weight: 500; color: #64748b; margin-bottom: 5px; }
+		.stat-value { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
+		.stat-delta { font-size: 0.75rem; color: #10b981; font-weight: 600; }
+		
+		.badge-status-present { background-color: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; border: 1px solid #bbf7d0; }
+		.badge-status-late { background-color: #fef9c3; color: #854d0e; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; border: 1px solid #fef08a; }
+		.badge-status-absent { background-color: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; border: 1px solid #fecaca; }
+		
+		#attendanceChart { height: 250px !important; }
 	</style>
+	<!-- Chart.js CDN -->
+	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -58,14 +78,15 @@
     <nav class="navbar navbar-expand-lg navbar-light py-3 px-4">
         <div class="container-fluid">
             <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-fingerprint me-2"></i>Biometric System</a>
+            <?php $active_method = $this->uri->segment(2); ?>
             <div class="ms-auto">
-                <a href="<?= site_url('C_zoho/dashboard') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary me-2">
+                <a href="<?= site_url('C_zoho/dashboard') ?>" class="btn btn-sm <?= ($active_method == 'dashboard' || $active_method == '') ? 'btn-primary' : 'btn-outline-primary' ?> me-2">
                     <i class="fas fa-home me-1"></i> Dashboard
                 </a>
-                <a href="<?= site_url('C_zoho/reports') ?>" class="btn btn-sm btn-primary">
+                <a href="<?= site_url('C_zoho/reports') ?>" class="btn btn-sm <?= ($active_method == 'reports') ? 'btn-primary' : 'btn-outline-primary' ?> me-2">
                     <i class="fas fa-file-alt me-1"></i> Reports
                 </a>
-                 <a href="<?= site_url('C_zoho/admin') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary ms-2">
+                <a href="<?= site_url('C_zoho/admin') ?>" class="btn btn-sm <?= ($active_method == 'admin') ? 'btn-primary' : 'btn-outline-primary' ?>">
                     <i class="fas fa-cogs me-1"></i> Admin Panel
                 </a>
             </div>
@@ -116,12 +137,58 @@
 			</div>
 		</div>
 
+		<!-- Summary Metrics -->
+		<div id="summaryRow" class="row mb-4" style="display: none;">
+			<div class="col-md-3">
+				<div class="card report-card-stat p-3 h-100">
+					<div class="stat-label">Total Working Days</div>
+					<div class="stat-value" id="stat_total_days">0</div>
+					<div class="stat-delta">Data for selected period</div>
+				</div>
+			</div>
+			<div class="col-md-3">
+				<div class="card report-card-stat p-3 h-100" style="border-left: 4px solid #f59e0b !important;">
+					<div class="stat-label">Late Comings</div>
+					<div class="stat-value" id="stat_late_count">0</div>
+					<div class="stat-delta text-warning"><i class="fas fa-clock me-1"></i>Delayed arrival</div>
+				</div>
+			</div>
+			<div class="col-md-3">
+				<div class="card report-card-stat p-3 h-100" style="border-left: 4px solid #10b981 !important;">
+					<div class="stat-label">On-Time Percentage</div>
+					<div class="stat-value" id="stat_ontime_percent">0%</div>
+					<div class="stat-delta">Efficiency Score</div>
+				</div>
+			</div>
+			<div class="col-md-3">
+				<div class="card report-card-stat p-3 h-100" style="border-left: 4px solid #3b82f6 !important;">
+					<div class="stat-label">Avg. Working Hours</div>
+					<div class="stat-value" id="stat_avg_hours">0h</div>
+					<div class="stat-delta">Daily Median</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="row mb-4" id="chartRow" style="display: none;">
+			<div class="col-md-12">
+				<div class="card">
+					<div class="card-header bg-white border-bottom py-3">
+						<h5 class="mb-0 fw-bold text-dark"><i class="fas fa-chart-bar me-2 text-primary"></i>Attendance Trend Analysis</h5>
+					</div>
+					<div class="card-body">
+						<canvas id="attendanceChart"></canvas>
+					</div>
+				</div>
+			</div>
+		</div>
+
         <!-- Monthly Report Section -->
 		<div class="row mb-4" id="monthlyReport" style="display:none;">
 			<div class="col-12">
 				<div class="card">
-                    <div class="card-header bg-white border-bottom py-3">
+                    <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
                         <h5 class="mb-0 fw-bold text-dark"><i class="fas fa-calendar-check me-2 text-success"></i>Monthly Summary</h5>
+						<div class="small text-muted"><i class="fas fa-info-circle me-1"></i>Late threshold set to <span id="displayLateThreshold">09:15 AM</span></div>
                     </div>
 					<div class="card-body">
 						<table id="reportTable" class="table table-striped w-100 table-hover">
@@ -168,7 +235,7 @@
 	</div>
 
     <!-- Edit Attendance Modal -->
-	<div class="modal fade" id="editModal" tabindex="-1">
+	<div class="modal" id="editModal" tabindex="-1">
 		<div class="modal-dialog">
 			<div class="modal-content">
 				<div class="modal-header">
@@ -211,7 +278,7 @@
 	</div>
 
     <!-- Modal -->
-	<div class="modal fade" id="empModal" tabindex="-1">
+	<div class="modal" id="empModal" tabindex="-1">
 		<div class="modal-dialog modal-md">
 			<div class="modal-content">
 				<div class="modal-header">
@@ -240,7 +307,8 @@
 		const API_URL = "<?= site_url('C_zoho/dashboard_api') ?>";
 		const EMP_API_URL = "<?= site_url('C_zoho/get_employees') ?>";
 		const UPDATE_URL = "<?= site_url('C_zoho/update_attendance') ?>";
-		let reportTable, detailTable, allData = [];
+		let reportTable, detailTable, allData = [], attendanceChartInstance = null;
+		let LATE_THRESHOLD = "09:15"; // Default, updated from API response
 
 		$(document).ready(function() {
 			$('#emp_filter').select2({ placeholder: 'Select Employee', allowClear: true, width: '100%' });
@@ -254,13 +322,19 @@
 			reportTable = $('#reportTable').DataTable({
 				pageLength: 25,
 				dom: "<'row mb-2'<'col-md-6'B><'col-md-6'f>><'row'<'col-12'tr>><'row mt-2'<'col-md-5'i><'col-md-7'p>>",
-				buttons: [{extend: 'excelHtml5', text: '<i class="fas fa-file-excel"></i> Excel', className: 'btn btn-success btn-sm'}]
+				buttons: [
+					{extend: 'excelHtml5', text: '<i class="fas fa-file-excel me-1"></i> Excel', className: 'btn btn-success btn-sm px-3'},
+					{extend: 'pdfHtml5', text: '<i class="fas fa-file-pdf me-1"></i> PDF', className: 'btn btn-danger btn-sm px-3'}
+				]
 			});
 
 			detailTable = $('#detailTable').DataTable({
 				pageLength: 25,
 				dom: "<'row mb-2'<'col-md-6'B><'col-md-6'f>><'row'<'col-12'tr>><'row mt-2'<'col-md-5'i><'col-md-7'p>>",
-				buttons: [{extend: 'excelHtml5', text: '<i class="fas fa-file-excel"></i> Excel', className: 'btn btn-success btn-sm'}],
+				buttons: [
+					{extend: 'excelHtml5', text: '<i class="fas fa-file-excel me-1"></i> Excel', className: 'btn btn-success btn-sm px-3'},
+					{extend: 'pdfHtml5', text: '<i class="fas fa-file-pdf me-1"></i> PDF', className: 'btn btn-danger btn-sm px-3'}
+				],
 				order: [[0, 'desc']]
 			});
 
@@ -338,9 +412,16 @@
 
 			$('#btnLoad').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Loading...');
 
-			$.get(API_URL, { from: from, to: to }, function(data) {
+			$.get(API_URL, { from: from, to: to, emp_id: empId }, function(data) {
 				allData = data.daily_attendance;
+				if (data.settings && data.settings.late_threshold) {
+					LATE_THRESHOLD = data.settings.late_threshold;
+					$('#displayLateThreshold').text(LATE_THRESHOLD);
+				}
 				
+				calculateSummary();
+				initAttendanceChart();
+
 				if (empId) {
 					showDetail(empId, $('#emp_filter option:selected').text(), 'all');
 				} else {
@@ -348,6 +429,87 @@
 				}
 
 				$('#btnLoad').prop('disabled', false).html('<i class="fas fa-sync-alt me-2"></i>Generate Report');
+			});
+		}
+
+		function calculateSummary() {
+			if (!allData || allData.length === 0) return;
+
+			let totalPresent = 0;
+			let lateCount = 0;
+			let totalMinutes = 0;
+			let workRecords = 0;
+			const uniqueDates = new Set();
+
+			allData.forEach(d => {
+				uniqueDates.add(d.work_date);
+				if (d.first_in && d.first_in !== '-') {
+					totalPresent++;
+					if (d.first_in > LATE_THRESHOLD) lateCount++;
+					
+					if (d.last_out && d.last_out !== '-') {
+						const [h1, m1] = d.first_in.split(':').map(Number);
+						const [h2, m2] = d.last_out.split(':').map(Number);
+						let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+						if (diff < 0) diff += 1440;
+						totalMinutes += diff;
+						workRecords++;
+					}
+				}
+			});
+
+			const totalDays = uniqueDates.size;
+			const onTimePercent = totalPresent > 0 ? Math.round(((totalPresent - lateCount) / totalPresent) * 100) : 0;
+			const avgHours = workRecords > 0 ? (totalMinutes / workRecords / 60).toFixed(1) : 0;
+
+			$('#stat_total_days').text(totalDays);
+			$('#stat_late_count').text(lateCount);
+			$('#stat_ontime_percent').text(onTimePercent + '%');
+			$('#stat_avg_hours').text(avgHours + 'h');
+			
+			$('#summaryRow').fadeIn();
+			$('#chartRow').fadeIn();
+		}
+
+		function initAttendanceChart() {
+			const ctx = document.getElementById('attendanceChart').getContext('2d');
+			const trendData = {};
+			
+			// Group by date
+			allData.forEach(d => {
+				if (!trendData[d.work_date]) trendData[d.work_date] = 0;
+				if (d.first_in && d.first_in !== '-') trendData[d.work_date]++;
+			});
+
+			const labels = Object.keys(trendData).sort();
+			const values = labels.map(l => trendData[l]);
+
+			if (attendanceChartInstance) attendanceChartInstance.destroy();
+
+			attendanceChartInstance = new Chart(ctx, {
+				type: 'line',
+				data: {
+					labels: labels,
+					datasets: [{
+						label: 'Employees Present',
+						data: values,
+						borderColor: '#3b82f6',
+						backgroundColor: 'rgba(59, 130, 246, 0.1)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 4,
+						pointBackgroundColor: '#3b82f6'
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: { legend: { display: false } },
+					scales: {
+						y: { beginAtZero: true, grid: { display: false }, ticks: { stepSize: 1 } },
+						x: { grid: { display: false } }
+					}
+				}
 			});
 		}
 
@@ -360,18 +522,17 @@
 				if (!summary[d.emp_id]) {
 					summary[d.emp_id] = { name: d.name || d.emp_id, present: 0, absent: 0 };
 				}
-				if (d.first_in) summary[d.emp_id].present++;
+				if (d.first_in && d.first_in !== '-') summary[d.emp_id].present++;
 				else summary[d.emp_id].absent++;
 			});
 
 			let rows = [];
 			Object.keys(summary).forEach(empId => {
 				const s = summary[empId];
-				// Make the Employee ID distinct and clickable
 				rows.push([
-                    `<span class="emp-id-link" data-empid="${empId}" data-empname="${s.name}">${empId}</span>`, 
+                    `<span class="emp-id-link fw-bold text-primary" data-empid="${empId}" data-empname="${s.name}">${empId}</span>`, 
                     s.name, 
-                    `<span class="badge bg-success fs-6">${s.present}</span>`
+                    `<span class="badge bg-success-subtle text-success border border-success-subtle px-3">${s.present} Days</span>`
                 ]);
 			});
 
@@ -392,21 +553,25 @@
 			let rows = [];
 
 			filtered.forEach(d => {
-				const isPresent = d.first_in ? true : false;
+				const isPresent = (d.first_in && d.first_in !== '-') ? true : false;
+				const isLate = isPresent && d.first_in > LATE_THRESHOLD;
 				
 				if (type === 'present' && !isPresent) return;
 				if (type === 'absent' && isPresent) return;
 
 				let hours = '-';
-				if (d.first_in && d.last_out && d.first_in !== '-' && d.last_out !== '-') {
+				if (isPresent && d.last_out && d.last_out !== '-') {
 					const [h1, m1] = d.first_in.split(':').map(Number);
 					const [h2, m2] = d.last_out.split(':').map(Number);
 					let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-					if (totalMinutes < 0) totalMinutes += 24 * 60;
+					if (totalMinutes < 0) totalMinutes += 1440;
 					hours = Math.floor(totalMinutes / 60) + 'h ' + (totalMinutes % 60) + 'm';
 				}
 
-				const status = isPresent ? '<span class="badge bg-success">Present</span>' : '<span class="badge bg-danger">Absent</span>';
+				let statusBadge = '';
+				if (!isPresent) statusBadge = '<span class="badge-status-absent">Absent</span>';
+				else if (isLate) statusBadge = '<span class="badge-status-late">Late Entry</span>';
+				else statusBadge = '<span class="badge-status-present">On Time</span>';
 				
                 const editBtn = `<button class="btn btn-sm btn-outline-primary btn-edit" 
                     data-empid="${d.emp_id}" 
@@ -417,7 +582,7 @@
                     <i class="fas fa-edit"></i>
                 </button>`;
 
-                rows.push([d.work_date, d.first_in || '-', d.last_out || '-', hours, status, editBtn]);
+                rows.push([d.work_date, d.first_in || '-', d.last_out || '-', hours, statusBadge, editBtn]);
 			});
 
 			// If empName has extra ID info, clean it
@@ -431,19 +596,32 @@
 		function showModal(empId, empName) {
 			const filtered = allData.filter(d => d.emp_id === empId);
 			const presentDates = [];
+			const lateDates = [];
 			const absentDates = [];
 
 			filtered.forEach(d => {
-				if (d.first_in) presentDates.push(d.work_date);
-				else absentDates.push(d.work_date);
+				const isPresent = (d.first_in && d.first_in !== '-') ? true : false;
+				if (isPresent) {
+					presentDates.push(d.work_date);
+					if (d.first_in > LATE_THRESHOLD) lateDates.push(d.work_date);
+				} else {
+					absentDates.push(d.work_date);
+				}
 			});
 
-			$('#modalTitle').html('<i class="fas fa-user me-2"></i>' + empName + ' (' + empId + ')');
-			$('#presentList').html(presentDates.length ? presentDates.map(d => {
+			$('#modalTitle').html('<i class="fas fa-user-tie me-2"></i>' + empName + ' <span class="badge bg-primary ms-2">' + empId + '</span>');
+			
+			let listHtml = presentDates.length ? presentDates.map(d => {
 				const date = new Date(d);
-				const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-				return '<li class="text-success mb-1"><i class="fas fa-check me-2"></i>' + d + ' <span class="text-muted small">(' + dayName + ')</span></li>';
-			}).join('') : '<li class="text-muted">No present dates found in this range.</li>');
+				const isLate = filtered.find(f => f.work_date === d).first_in > LATE_THRESHOLD;
+				const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+				const lateBadge = isLate ? ' <span class="badge bg-warning text-dark small ms-1">Late</span>' : '';
+				return '<li class="mb-2 d-flex justify-content-between align-items-center border-bottom pb-1">' + 
+					   '<span><i class="fas fa-check-circle text-success me-2"></i><b>' + d + '</b> <small class="text-muted">(' + dayName + ')</small>' + lateBadge + '</span>' +
+					   '<span class="text-muted small">' + filtered.find(f => f.work_date === d).first_in + '</span></li>';
+			}).join('') : '<li class="text-muted">No attendance found.</li>';
+
+			$('#presentList').html(listHtml);
 			
 			new bootstrap.Modal(document.getElementById('empModal')).show();
 		}

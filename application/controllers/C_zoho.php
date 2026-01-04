@@ -101,7 +101,8 @@ class C_zoho extends CI_Controller
 	public function check_raw_data()
 	{
 		$date = $this->input->get('date') ?: date('Y-m-d');
-		$count = $this->db->where('work_date', $date)->count_all_results('zoho_attendance_raw');
+		// Querying iclock_transaction instead of zoho_attendance_raw
+		$count = $this->db->where("DATE(punch_time)", $date)->count_all_results('iclock_transaction');
 		echo json_encode(['status' => 'success', 'date' => $date, 'count' => $count]);
 	}
 
@@ -158,6 +159,10 @@ class C_zoho extends CI_Controller
 	 * - Stores in zoho_attendance_raw table
 	 * - Then processes into zoho_attendance_daily
 	 */
+	/*
+	 * Process local attendance from iclock_transaction to daily summary
+	 * Replaces old import_zkteco_attendance which tried to move data to raw table
+	 */
 	public function import_zkteco_attendance()
 	{
 		$date = $this->input->get('date');
@@ -173,183 +178,84 @@ class C_zoho extends CI_Controller
 			$start_date = $end_date = date('Y-m-d');
 		}
 
-		// Load ZKTeco configuration
-		$zk_base_url = Globals::$zkteco_base_url;
-		$zk_username = Globals::$zkteco_username;
-		$zk_password = Globals::$zkteco_password;
-
-		// Step 1: Get authentication token
-		$authRes = $this->get_zkteco_token($zk_base_url, $zk_username, $zk_password);
-		if (!$authRes['success']) {
-			echo json_encode(['status' => 'error', 'message' => 'Auth Failed: ' . $authRes['message']]);
-			return;
-		}
-		$token = $authRes['token'];
-
-		// Step 2: Fetch transactions
-		$imported = 0;
-		$updated = 0;
-		$url = $zk_base_url . '/iclock/api/transactions/?start_time=' . $start_date . ' 00:00:00&end_time=' . $end_date . ' 23:59:59';
-
-		$ch = curl_init($url);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-		curl_setopt($ch, CURLOPT_HTTPHEADER, $this->get_zkteco_headers($token));
-		$response = curl_exec($ch);
-		
-		if (curl_errno($ch)) {
-			log_message('error', '[ZKTECO_FETCH] cURL Error: ' . curl_error($ch));
-		}
-		
-		curl_close($ch);
-
-		$data = json_decode($response, true);
-		
-		if (empty($data)) {
-			log_message('error', "[ZKTECO_FETCH] Empty or invalid JSON response: " . substr($response, 0, 500));
-		}
-
-		if (isset($data['data'])) {
-			foreach ($data['data'] as $transaction) {
-				$emp_id = $transaction['emp_code'];
-				$punch_time = date('Y-m-d H:i:s', strtotime($transaction['punch_time']));
-				$work_date = date('Y-m-d', strtotime($punch_time));
-
-				// Check if already exists
-				$existing = $this->db->where([
-					'emp_id' => $emp_id,
-					'punch_time' => $punch_time
-				])->get('zoho_attendance_raw')->row();
-
-				if (!$existing) {
-					$this->db->insert('zoho_attendance_raw', [
-						'emp_id' => $emp_id,
-						'work_date' => $work_date,
-						'punch_time' => $punch_time,
-						'punch_type' => 'IN'
-					]);
-					$imported++;
-				}
-			}
-		}
-
-		// Step 3: Process into daily attendance
+		// Directly process from iclock_transaction to zoho_attendance_daily
 		$this->process_to_daily($start_date, $end_date);
 
-		$summary = ['imported' => $imported, 'message' => 'Data imported and processed'];
+		// Count records processed for reporting
+		$processed_count = $this->db
+			->where('work_date >=', $start_date)
+			->where('work_date <=', $end_date)
+			->count_all_results('zoho_attendance_daily');
 
-	// Send Email Report
-	$this->Zoho_model->send_simple_report("ZKTeco Device Log Import", [
-		'date_range' => $start_date . ' to ' . $end_date,
-		'imported_logs' => $imported
-	]);
+		$summary = ['message' => 'Processed daily attendance from iclock_transaction', 'records' => $processed_count];
 
-	echo json_encode([
-		'status' => 'completed',
-		'date_range' => ['from' => $start_date, 'to' => $end_date],
-		'summary' => $summary
-	]);
-}
+		// Send Email Report
+		$this->Zoho_model->send_simple_report("Attendance Processing (Local DB)", [
+			'date_range' => $start_date . ' to ' . $end_date,
+			'processed_records' => $processed_count
+		]);
 
-	private function get_zkteco_token($base_url, $username, $password)
-	{
-		$url = rtrim($base_url, '/') . '/api-token-auth/';
-		$ch = curl_init($url);
-		
-		$postFields = [
-			'username' => $username,
-			'password' => $password
-		];
-
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
-		curl_setopt($ch, CURLOPT_HTTPHEADER, $this->get_zkteco_headers(null, 'application/x-www-form-urlencoded'));
-		
-		$response = curl_exec($ch);
-		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-		if (curl_errno($ch)) {
-			$curlError = curl_error($ch);
-			log_message('error', '[ZKTECO_AUTH] cURL Error: ' . $curlError);
-			curl_close($ch);
-			return ['success' => false, 'message' => "Connection Error: $curlError"];
-		}
-
-		curl_close($ch);
-
-		if (empty($response)) {
-			log_message('error', "[ZKTECO_AUTH] Empty response. HTTP Code: $httpCode");
-			return ['success' => false, 'message' => "Empty response from server (HTTP $httpCode)"];
-		}
-
-		$data = json_decode($response, true);
-		
-		if (!isset($data['token'])) {
-			// Save full response for developer to see in logs
-			log_message('error', "[ZKTECO_AUTH] Failed. Code: $httpCode. Raw Response: >>" . $response . "<<");
-			
-			$preview = is_array($data) ? json_encode($data) : substr(strip_tags($response), 0, 100);
-			return [
-				'success' => false, 
-				'message' => "Invalid response (HTTP $httpCode). " . ($preview ?: "No body returned from server")
-			];
-		}
-
-		return ['success' => true, 'token' => $data['token']];
+		echo json_encode([
+			'status' => 'completed',
+			'date_range' => ['from' => $start_date, 'to' => $end_date],
+			'summary' => $summary
+		]);
 	}
 
-	/**
-	 * Build ZKTeco API Headers dynamically
-	 */
-	private function get_zkteco_headers($token = null, $contentType = 'application/json')
-	{
-		$headers = [
-			'User-Agent: Mozilla/5.0'
-		];
 
-		if ($contentType) {
-			$headers[] = 'Content-Type: ' . $contentType;
-			$headers[] = 'Accept: application/json';
-		}
-
-		if ($token) {
-			$headers[] = 'Authorization: Token ' . $token;
-		}
-
-		// Add bypass headers only if using a tunnel
-		$baseUrl = Globals::$zkteco_base_url;
-		if (stripos($baseUrl, 'ngrok') !== false || stripos($baseUrl, 'loca.lt') !== false) {
-			$headers[] = 'Bypass-Tunnel-Reminder: true';
-			$headers[] = 'ngrok-skip-browser-warning: 1';
-			
-			// Only add spoofing headers for tunnels if absolutely needed, 
-			// but for now let's try WITHOUT them to see if it fixes the 400
-			// $headers[] = 'X-Forwarded-Host: localhost';
-			// $headers[] = 'X-Forwarded-For: 127.0.0.1';
-		}
-
-		return $headers;
-	}
 
 	private function process_to_daily($start_date, $end_date)
 	{
 		$current_date = $start_date;
 		while (strtotime($current_date) <= strtotime($end_date)) {
-			$punches = $this->db->select('emp_id, MIN(punch_time) as first_in, MAX(punch_time) as last_out')
-				->where('work_date', $current_date)
-				->group_by('emp_id')
-				->get('zoho_attendance_raw')
+			// Query iclock_transaction directly with smart aggregation
+			// Rule: 
+			// IN: punch_state '0' OR terminal 'NYU7253400270'
+			// OUT: punch_state '1' OR terminal 'NYU7253400273'
+			// Fallback: earliest/latest punch if rules don't match (for other devices)
+			
+			$this->db->select("emp_code as emp_id");
+			$this->db->select("MIN(punch_time) as min_activity");
+			$this->db->select("MAX(punch_time) as max_activity");
+			$this->db->select("MIN(CASE WHEN punch_state = '0' OR terminal_sn = 'NYU7253400270' THEN punch_time END) as rule_first_in");
+			$this->db->select("MAX(CASE WHEN punch_state = '1' OR terminal_sn = 'NYU7253400273' THEN punch_time END) as rule_last_out");
+			
+			$punches = $this->db
+				->where("punch_time >=", $current_date . ' 00:00:00')
+				->where("punch_time <=", $current_date . ' 23:59:59')
+				->group_by('emp_code')
+				->get('iclock_transaction')
 				->result();
 
 			foreach ($punches as $punch) {
+				// Use Rule logic if found, otherwise simple First/Last
+				$raw_in = $punch->rule_first_in ?: $punch->min_activity;
+				$raw_out = $punch->rule_last_out ?: $punch->max_activity;
+
+				/* 
+				   Edge Case: If user only punched ONCE in the day:
+				   min_activity == max_activity.
+				   If that punch was an IN, raw_in is set. raw_out might be set to same time (since max fallback).
+				   Usually we want CheckIn and CheckOut to be different, or CheckOut empty if still working.
+				   However, for Zoho Sync, sending same In/Out is often treated as 0 hours.
+				*/
+				
+				$first_in = date('H:i:s', strtotime($raw_in));
+				$last_out = date('H:i:s', strtotime($raw_out));
+
+				// Safety: If In > Out (shouldn't happen with Min/Max, but rule logic might allow it if data is weird)
+				if ($first_in > $last_out) {
+					// Swap or default to min/max
+					$first_in = date('H:i:s', strtotime($punch->min_activity));
+					$last_out = date('H:i:s', strtotime($punch->max_activity));
+				}
+
 				$existing = $this->db->where(['emp_id' => $punch->emp_id, 'work_date' => $current_date])
 					->get('zoho_attendance_daily')->row();
 
 				$data = [
-					'first_in' => date('H:i:s', strtotime($punch->first_in)),
-					'last_out' => date('H:i:s', strtotime($punch->last_out)),
+					'first_in' => $first_in,
+					'last_out' => $last_out,
 					'synced' => 0
 				];
 
@@ -379,61 +285,8 @@ class C_zoho extends CI_Controller
 	 */
 	public function process_local_attendance()
 	{
-		$date = $this->input->get('date');
-		$from = $this->input->get('from');
-		$to = $this->input->get('to');
-
-		if ($from && $to) {
-			$start_date = $from;
-			$end_date = $to;
-		} elseif ($date) {
-			$start_date = $end_date = $date;
-		} else {
-			$start_date = $end_date = date('Y-m-d');
-		}
-
-		$imported = 0;
-		$updated = 0;
-		$current_date = $start_date;
-
-		while (strtotime($current_date) <= strtotime($end_date)) {
-			// Get all punches for this date grouped by employee
-			$punches = $this->db->select('emp_id, MIN(punch_time) as first_in, MAX(punch_time) as last_out')
-				->where('work_date', $current_date)
-				->group_by('emp_id')
-				->get('zoho_attendance_raw')
-				->result();
-
-			foreach ($punches as $punch) {
-				$existing = $this->db->where(['emp_id' => $punch->emp_id, 'work_date' => $current_date])
-					->get('zoho_attendance_daily')->row();
-
-				$data = [
-					'first_in' => date('H:i:s', strtotime($punch->first_in)),
-					'last_out' => date('H:i:s', strtotime($punch->last_out)),
-					'synced' => 0,
-					'updated_at' => date('Y-m-d H:i:s')
-				];
-
-				if ($existing) {
-					$this->db->update('zoho_attendance_daily', $data, ['id' => $existing->id]);
-					$updated++;
-				} else {
-					$data['emp_id'] = $punch->emp_id;
-					$data['work_date'] = $current_date;
-					$this->db->insert('zoho_attendance_daily', $data);
-					$imported++;
-				}
-			}
-
-			$current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
-		}
-
-		echo json_encode([
-			'status' => 'completed',
-			'date_range' => ['from' => $start_date, 'to' => $end_date],
-			'summary' => ['imported' => $imported, 'updated' => $updated]
-		]);
+		// Alias to import_zkteco_attendance for backward compatibility
+		$this->import_zkteco_attendance();
 	}
 
 	public function dashboard()
@@ -693,51 +546,88 @@ class C_zoho extends CI_Controller
 		$from = $this->input->get('from');
 		$to = $this->input->get('to');
 		$date = $this->input->get('date');
+		$emp_id = $this->input->get('emp_id');
 
-		if ($from && $to) {
-			$start_date = $from;
-			$end_date = $to;
-		} elseif ($date) {
-			$start_date = $end_date = $date;
-		} else {
-			$start_date = $end_date = date('Y-m-d');
+		$start_date = $from ?: ($date ?: date('Y-m-d'));
+		$end_date = $to ?: ($date ?: date('Y-m-d'));
+
+		// 1. Fetch Main Attendance Data
+		$this->db->select('d.emp_id, d.work_date, d.first_in, d.last_out, d.synced, e.name')
+			->from('zoho_attendance_daily d')
+			->join('zoho_employees e', 'd.emp_id = e.emp_id', 'left')
+			->where('d.work_date >=', $start_date)
+			->where('d.work_date <=', $end_date);
+		
+		if ($emp_id) {
+			$this->db->where('d.emp_id', $emp_id);
 		}
 
+		$daily_attendance = $this->db->order_by('d.work_date', 'DESC')->get()->result();
+
+		// 2. Fetch Stats (Calculated from separate clean queries to avoid active record pollution)
+		$this->db->where('work_date >=', $start_date)->where('work_date <=', $end_date);
+		if ($emp_id) {
+			$this->db->where('emp_id', $emp_id);
+		}
+		$pending_sync = $this->db->where('synced', 0)->count_all_results('zoho_attendance_daily');
+
+		$total_employees = $this->db->count_all_results('zoho_employees');
+
+		// 3. Recent Punches (from iclock_transaction instead of zoho_attendance_raw)
+		// Assuming iclock_transaction has columns: emp_code, punch_time, punch_state, terminal_sn
+		$this->db->select('r.emp_code as emp_id, r.punch_time, r.punch_state, r.terminal_sn, DATE(r.punch_time) as work_date, e.name')
+			->from('iclock_transaction r')
+			->join('zoho_employees e', 'r.emp_code = e.emp_id', 'left')
+			->where('r.punch_time >=', $start_date . ' 00:00:00')
+			->where('r.punch_time <=', $end_date . ' 23:59:59')
+			->order_by('r.punch_time', 'DESC')
+			->limit(20);
+		
+		$recent_punches = $this->db->get()->result();
+
+		// 4. Weekly Trend (Calculated for the chart)
+		$weekly_trend = $this->db->select('work_date, COUNT(*) as present_count')
+			->from('zoho_attendance_daily')
+			->where('work_date >', date('Y-m-d', strtotime('-7 days')))
+			->group_by('work_date')
+			->order_by('work_date', 'ASC')
+			->get()->result();
+
 		$data = [
-			'date_range' => [
-				'from' => $start_date,
-				'to' => $end_date
-			],
+			'date_range' => ['from' => $start_date, 'to' => $end_date],
 			'stats' => [
-				'total_employees' => $this->db->count_all_results('zoho_employees'),
-				'present_in_range' => $this->db->where('work_date >=', $start_date)
-					->where('work_date <=', $end_date)
-					->count_all_results('zoho_attendance_daily'),
-				'pending_sync' => $this->db->where('work_date >=', $start_date)
-					->where('work_date <=', $end_date)
-					->where('synced', 0)
-					->count_all_results('zoho_attendance_daily')
+				'total_employees' => $total_employees,
+				'present_in_range' => count($daily_attendance),
+				'pending_sync' => $pending_sync
 			],
-			'recent_punches' => $this->db->select('r.emp_id, r.punch_time, r.work_date, e.name')
-				->from('zoho_attendance_raw r')
-				->join('zoho_employees e', 'r.emp_id = e.emp_id', 'left')
-				->where('r.work_date >=', $start_date)
-				->where('r.work_date <=', $end_date)
-				->order_by('r.punch_time', 'DESC')
-				->limit(20)
-				->get()->result(),
-			'daily_attendance' => $this->db->select('d.emp_id, d.work_date, d.first_in, d.last_out, d.synced, e.name')
-				->from('zoho_attendance_daily d')
-				->join('zoho_employees e', 'd.emp_id = e.emp_id', 'left')
-				->where('d.work_date >=', $start_date)
-				->where('d.work_date <=', $end_date)
-				->order_by('d.work_date', 'DESC')
-				->limit(50)
-				->get()->result()
+			'recent_punches' => $recent_punches,
+			'daily_attendance' => $daily_attendance,
+			'weekly_trend' => $weekly_trend,
+			'settings' => [
+				'late_threshold' => $this->Zoho_model->get_setting('late_threshold', '09:15'),
+				'company_name' => $this->Zoho_model->get_setting('company_name', Globals::$admin_company_name)
+			]
 		];
 
 		header('Content-Type: application/json');
 		echo json_encode($data);
+	}
+
+	/**
+	 * AJAX endpoint to save system settings
+	 */
+	public function save_settings()
+	{
+		$late_threshold = $this->input->post('late_threshold');
+		$grace_period = $this->input->post('grace_period');
+		$company_name = $this->input->post('company_name');
+
+		if ($late_threshold) $this->Zoho_model->save_setting('late_threshold', $late_threshold);
+		if ($grace_period !== null) $this->Zoho_model->save_setting('grace_period', $grace_period);
+		if ($company_name) $this->Zoho_model->save_setting('company_name', $company_name);
+
+		header('Content-Type: application/json');
+		echo json_encode(['status' => 'success', 'message' => 'Settings updated successfully']);
 	}
 
 	/**
@@ -1164,33 +1054,18 @@ class C_zoho extends CI_Controller
 
 	public function import_zkteco_employees()
 	{
-		// Load config
-		$zk_base_url = Globals::$zkteco_base_url;
-		$zk_username = Globals::$zkteco_username;
-		$zk_password = Globals::$zkteco_password;
-		// 1. Authenticate
-		$token = $this->get_zkteco_token($zk_base_url, $zk_username, $zk_password);
-		if (!$token) {
-			echo json_encode(['status' => 'error', 'message' => 'Authentication failed']);
-			return;
-		}
-		// 2. Fetch Employees
-		$url = $zk_base_url . '/personnel/api/employees/?page_size=1000'; // Fetch up to 1000 employees
-		$ch = curl_init($url);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Token ' . $token]);
-		$response = curl_exec($ch);
-		curl_close($ch);
-		$result = json_decode($response, true);
-
-		// 3. Store in DB
+		// Import locally from personnel_employee table
+		$this->db->select('emp_code, first_name, last_name, department_id'); // Selecting typical columns
+		$query = $this->db->get('personnel_employee');
+		
 		$imported = 0;
-		if (isset($result['data'])) {
-			foreach ($result['data'] as $emp) {
+		if ($query) {
+			$employees = $query->result_array();
+			foreach ($employees as $emp) {
 				$data = [
 					'emp_id' => $emp['emp_code'],
-					'name'   => trim($emp['first_name'] . ' ' . $emp['last_name']),
-					'department' => $emp['department_name'] ?? null, // Check API actual field name
+					'name'   => trim(($emp['first_name'] ?? '') . ' ' . ($emp['last_name'] ?? '')),
+					'department' => $emp['department_id'] ?? null, // You might need to join with a department table if you want names
 					// Add designation etc if available
 				];
 
@@ -1200,10 +1075,10 @@ class C_zoho extends CI_Controller
 			}
 		}
 
-		$summary = ['imported' => $imported, 'total' => count($result['data'] ?? [])];
+		$summary = ['imported' => $imported, 'total' => count($employees ?? [])];
 
 		// Send Email Report
-		$this->Zoho_model->send_simple_report("ZKTeco Employee Import", $summary);
+		$this->Zoho_model->send_simple_report("Device Employee Import (Local DB)", $summary);
 
 		echo json_encode([
 			'status' => 'completed',
@@ -1215,7 +1090,7 @@ class C_zoho extends CI_Controller
 	 * Bulk Push Attendance to Zoho
 	 * URL: /C_zoho/sync_attendance_bulk
 	 */
-	public function sync_attendance_bulk()
+	public function sync_attendance_bulk_old()
 	{
 		// Remove time limit
 		set_time_limit(0);
@@ -1225,6 +1100,10 @@ class C_zoho extends CI_Controller
 		$from = $this->input->get('from');
 		$to = $this->input->get('to');
 		$empIdFilter = $this->input->get('empId');
+        
+        // Granular Sync Flags (Default to true for backward compatibility)
+        $user_sync_in = $this->input->get('sync_in') !== '0'; 
+        $user_sync_out = $this->input->get('sync_out') !== '0';
 
 		// Determine date range or default to today
 		if ($from && $to) {
@@ -1237,8 +1116,12 @@ class C_zoho extends CI_Controller
 			$start_date = $end_date = date('Y-m-d');
 		}
 
-        // 1. Fetch unsynced records locally
-		$this->db->where('synced', 0);
+        // 1. Fetch records locally
+        // If specific employee is selected, we Fetch ALL records (even synced ones) to allow Force-Sync/Constraint Check
+		if (!$empIdFilter) {
+            $this->db->where('synced', 0);
+        }
+        
         $this->db->where('work_date >=', $start_date);
         $this->db->where('work_date <=', $end_date);
 		
@@ -1253,15 +1136,12 @@ class C_zoho extends CI_Controller
 			return;
 		}
 
-        // 2. Fetch Existing Data from Zoho to prevent Duplicates
-        // We need to fetch all attendance for this date range to check existence
-        $zoho_lookup = []; // format: [emp_id][date] = true
+        // 2. Fetch Existing Data from Zoho (Restored for Smart Context)
+        // We need this to know the EXISTING Check-In time if we want to validly push a Check-Out
+        $zoho_lookup = [];
         $more_records = true;
         $start_index = 0;
-        $fetched_zoho_count = 0;
-
-        // Only fetch if we have a reasonable date range (don't fetch 1 year of data if only pushing 1 day)
-        // Loop to handle pagination (100 per page)
+        
         while ($more_records) {
              if (connection_aborted()) break;
 
@@ -1270,31 +1150,27 @@ class C_zoho extends CI_Controller
             if (isset($response['result']) && is_array($response['result'])) {
                 $batch = $response['result'];
                 foreach ($batch as $entry) {
-                    // Based on user sample:
-                    // result -> employeeDetails -> id
-                    // result -> attendanceDetails -> {date}
-                    
                     $emp_id = $entry['employeeDetails']['id'] ?? null;
                     if (!$emp_id) continue;
                     
                     $attendance = $entry['attendanceDetails'] ?? [];
                     foreach ($attendance as $date => $details) {
-                        // Check if FirstIn is not '-' before marking as existing?
-                        // Actually, if it's in the report, it's a record in Zoho.
-                        $zoho_lookup[$emp_id][$date] = true;
+                        $fIn = $details['FirstIn'] ?? ($details['First In'] ?? '-');
+                        $lOut = $details['LastOut'] ?? ($details['Last Out'] ?? '-');
+                        $zoho_lookup[$emp_id][$date] = [
+                            'has_in' => ($fIn !== '-' && !empty($fIn)),
+                            'has_out' => ($lOut !== '-' && !empty($lOut)),
+                            'first_in' => $fIn, // Store EXACT string from Zoho (e.g. 09:57 AM)
+                            'last_out' => $lOut
+                        ];
                     }
                 }
                 
-                if (count($batch) < 100) {
-                    $more_records = false;
-                } else {
-                    $start_index += 100;
-                    // Safety break for extremely large sets
-                    if ($start_index > 5000) $more_records = false; 
-                }
-                $fetched_zoho_count += count($batch);
+                if (count($batch) < 100) $more_records = false;
+                else $start_index += 100;
+                if ($start_index > 5000) $more_records = false; 
             } else {
-                $more_records = false; // No more data or error
+                $more_records = false;
             }
         }
 
@@ -1305,39 +1181,67 @@ class C_zoho extends CI_Controller
         $skipped_count = 0;
 
         foreach ($records as $row) {
-            // Skip invalid times or empty records
+            // Basic validation
             if (empty($row->first_in) || empty($row->last_out) || $row->first_in == '-' || $row->last_out == '-') {
                 continue;
             }
 
-            // CHECK DUPLICATE
-            if (isset($zoho_lookup[$row->emp_id][$row->work_date])) {
-                // Record already exists in Zoho!
-                // We should mark it as synced locally so we don't try again
-                $ids_already_synced[] = $row->id;
-                $skipped_count++;
-                continue;
+            // SIMPLIFIED LOGIC: Push exactly what user asked for.
+            $final_check_in = null;
+            $final_check_out = null;
+
+            if ($user_sync_in) {
+                $final_check_in = $row->work_date . ' ' . $row->first_in;
+            }
+            
+            if ($user_sync_out) {
+                $final_check_out = $row->work_date . ' ' . $row->last_out;
+                
+                // SMART CONTEXT:
+                // If we are pushing Out, try to find the EXISTING Check-In from Zoho to pair it with.
+                // This avoids "Duplicate" errors caused by sending a slightly different Check-In time.
+                if (isset($zoho_lookup[$row->emp_id][$row->work_date])) {
+                    $zData = $zoho_lookup[$row->emp_id][$row->work_date];
+                    if ($zData['has_in'] && !empty($zData['first_in'])) {
+                        $zIn = $zData['first_in'];
+                        // Zoho might return "09:57 AM" or "09:57". Simple check.
+                        // If it's short, prepend Date.
+                        if (strlen($zIn) <= 12) { // "09:57 AM" is 8 chars
+                             // If it has AM/PM, our pushAttendance might need to handle it, 
+                             // BUT mostly we just want to send what we have generally. 
+                             // Wait, pushAttendance expects HH:mm:ss usually.
+                             // If Zoho gives AM/PM, we might need to convert.
+                             // Actually, let's just stick to LOCAL First In if Zoho format is weird,
+                             // UNLESS we are sure.
+                             
+                             // Safer bet: If Zoho has In, we send ONLY CheckOut?
+                             // No, API usually requires pair.
+                             // Let's use LOCAL date + Zoho Time string?
+                             // No, let's convert Zoho Time to HH:mm:ss if possible?
+                             // Too risky without testing. 
+                             
+                             // Let's go with: Use LOCAL First-In as fallback, but if we have Zoho data, maybe we can assume it's same day?
+                             // Actually, the "Duplicate" error earlier suggests Zoho matched the Check-In anyway.
+                    }
+                }
+                }
+
+                // Standard Logic: Use Local First-In if we didn't context match
+                if (empty($final_check_in)) {
+                     $final_check_in = $row->work_date . ' ' . $row->first_in;
+                }
             }
 
-            // Zoho needs YYYY-MM-DD HH:MM:SS
-            // Our DB has separate Date and Time
-            $checkInTime = $row->work_date . ' ' . $row->first_in;
-            $checkOutTime = $row->work_date . ' ' . $row->last_out;
+            $payload_item = ['empId' => $row->emp_id];
+            if ($final_check_in) $payload_item['checkIn'] = $final_check_in;
+            if ($final_check_out) $payload_item['checkOut'] = $final_check_out;
 
-            // Create Check-In Object
-            $json_payload[] = [
-                'empId' => $row->emp_id,
-                'checkIn' => $checkInTime
-            ];
-
-            // Create Check-Out Object
-            $json_payload[] = [
-                'empId' => $row->emp_id,
-                'checkOut' => $checkOutTime
-            ];
-            
-            $ids_to_update[] = $row->id;
-            $pushed_count++;
+            // Only add if we have something valid to push
+            if (!empty($payload_item['checkIn'])) {
+                $json_payload[] = $payload_item;
+                $ids_to_update[] = $row->id;
+                $pushed_count++;
+            }
         }
 
         // UPDATE LOCALLY "ALREADY SYNCED"
@@ -1363,41 +1267,91 @@ class C_zoho extends CI_Controller
              return;
         }
 
-        // Send to Zoho in chunks of 50 records (100 entries) to be safe
-        $chunks = array_chunk($json_payload, 100); 
-        $errors = [];
+        // SWITCH TO SINGLE PUSH LOOP
+        // Bulk import is failing to update existing records or causing partial failures.
+        // We will push one by one to ensure each record is handled.
 
-        foreach ($chunks as $chunk) {
-            $response = $this->Zoho_model->bulkImportAttendance($chunk);
+        $errors = [];
+        $ids_to_update_success = [];
+
+        foreach ($json_payload as $index => $payload) {
+             // Prepare data for single push model
+             // Model expects: empId, date, checkIn (time only), checkOut (time only)
              
-             // Check for errors in the response
-             if (isset($response['error']) || (isset($response['status']) && $response['status'] != 0)) { 
-                 if (isset($response['message'])) $errors[] = $response['message'];
-                 else $errors[] = json_encode($response);
-             } 
+             // Extract Date and Time from Y-m-d H:i:s
+             $dtParts = explode(' ', $payload['checkIn']);
+             $dateStr = $dtParts[0]; 
+             $checkInTime = $dtParts[1];
+             
+             $checkOutTime = '';
+             if (isset($payload['checkOut'])) {
+                 $coParts = explode(' ', $payload['checkOut']);
+                 $checkOutTime = $coParts[1];
+             }
+
+             $singleData = [
+                 'empId' => $payload['empId'],
+                 'date' => $dateStr,
+                 'checkIn' => $checkInTime,
+                 'checkOut' => $checkOutTime
+             ];
+
+             $response = $this->Zoho_model->pushAttendance($singleData);
+             
+             // Check response
+             $success = false;
+             $msg_text = $response['message'] ?? ($response['msg'] ?? ''); // Handle both keys
+             
+             if (isset($response['response']) && stripos($response['response'], 'success') !== false) {
+                 $success = true;
+             }
+             elseif (stripos($msg_text, 'Success') !== false) {
+                 $success = true;
+             }
+             // Handle "Duplicate" or "exist" error as success-ish
+             elseif (
+                 stripos($msg_text, 'exist') !== false || 
+                 stripos($msg_text, 'Duplicate') !== false
+             ) {
+                 $success = true; 
+                 $errors[] = "Marked as Synced: Zoho reported duplicate.";
+             }
+             else {
+                 $errors[] = "Emp " . $payload['empId'] . ": " . json_encode($response);
+             }
+
+             if ($success) {
+                 // Match back to original ID using the index from the loop since arrays match 1:1
+                 $ids_to_update_success[] = $ids_to_update[$index];
+             }
         }
 
         if (empty($errors)) {
-             if (!empty($ids_to_update)) {
-                $this->db->where_in('id', $ids_to_update);
+             if (!empty($ids_to_update_success)) {
+                $this->db->where_in('id', $ids_to_update_success);
                 $this->db->update('zoho_attendance_daily', [
                     'synced' => 1, 
                     'synced_at' => date('Y-m-d H:i:s'),
                     'retry_count' => 0, 
-                    'last_error' => 'Bulk Sync Success'
+                    'last_error' => 'Force Sync Single'
                 ]);
              }
-             $msg = 'Successfully pushed ' . $pushed_count . ' records. Skipped ' . $skipped_count . ' duplicates.';
-             $status = 'completed';
+             $status = 'success';
+             $msg = "Successfully pushed " . count($ids_to_update_success) . " records.";
         } else {
+             $status = 'warning';
+             $msg = "Completed with errors. " . count($ids_to_update_success) . " success, " . count($errors) . " failed.";
+             $msg .= " First error: " . $errors[0];
+             
+             // Log error locally for the failed ones? 
+             // Logic is complex because we don't know exactly which ID failed in the error array easily without map.
+             // For now, just mark last_error generically for all attempted.
              if (!empty($ids_to_update)) {
                 $this->db->where_in('id', $ids_to_update);
-                $this->db->set('retry_count', 'retry_count+1', FALSE);
-                $this->db->set('last_error', substr(implode(', ', $errors), 0, 255));
-                $this->db->update('zoho_attendance_daily');
+                 $this->db->update('zoho_attendance_daily', [
+                    'last_error' => substr($msg, 0, 255)
+                ]);
              }
-             $msg = 'Errors: ' . implode(', ', $errors);
-             $status = 'error';
         }
 
     $summary_data = [
@@ -1416,7 +1370,184 @@ class C_zoho extends CI_Controller
 	echo json_encode([
 		'status' => $status,
 		'message' => $msg,
-		'summary' => $summary_data
+		'summary' => $summary_data,
+        'debug_errors' => $errors // Force return debug info
 	]);
 }
+public function sync_attendance_bulk()
+{
+    set_time_limit(0);
+    ini_set('memory_limit', '512M');
+
+    $date        = $this->input->get('date');
+    $from        = $this->input->get('from');
+    $to          = $this->input->get('to');
+    $empIdFilter = $this->input->get('empId');
+
+    $user_sync_in  = $this->input->get('sync_in') !== '0';
+    $user_sync_out = $this->input->get('sync_out') !== '0';
+
+    // Date range
+    if ($from && $to) {
+        $start_date = $from;
+        $end_date   = $to;
+    } elseif ($date) {
+        $start_date = $end_date = $date;
+    } else {
+        $start_date = $end_date = date('Y-m-d');
+    }
+
+    /* -------------------------------------------------------
+     * 1. FETCH LOCAL RECORDS with Employee Names
+     * ----------------------------------------------------- */
+    $this->db->select('a.*, e.name as emp_name');
+    $this->db->from('zoho_attendance_daily a');
+    $this->db->join('zoho_employees e', 'a.emp_id = e.emp_id', 'left');
+
+    if (!$empIdFilter) {
+        $this->db->where('a.synced', 0);
+        // User Request: Only push if employee exists in zoho_employees table
+        $this->db->where("a.emp_id IN (SELECT emp_id FROM zoho_employees)", NULL, FALSE);
+    }
+    
+    $this->db->where('a.work_date >=', $start_date);
+    $this->db->where('a.work_date <=', $end_date);
+    
+    if ($empIdFilter) {
+        $this->db->where('a.emp_id', $empIdFilter);
+    }
+    
+    $records = $this->db->get()->result();
+
+    if (empty($records)) {
+        echo json_encode([
+            'status'  => 'completed',
+            'message' => 'No records to sync'
+        ]);
+        return;
+    }
+
+    /* -------------------------------------------------------
+     * STRICT COMMAND MODE - DIRECT PUSH
+     * Matches user's Postman logic exactly.
+     * ----------------------------------------------------- */
+
+    $success_ids = [];
+    $errors      = [];
+
+    foreach ($records as $row) {
+        // Skip invalid rows
+        if (empty($row->first_in) || empty($row->last_out)) {
+            continue;
+        }
+
+        $payload = [
+            'empId' => $row->emp_id,
+            'date'  => $row->work_date
+        ];
+
+        // SCENARIO 3: BOTH (Check-In AND Check-Out)
+        if ($user_sync_in && $user_sync_out) {
+            $payload['checkIn'] = $row->first_in;
+            $payload['checkOut'] = $row->last_out;
+        }
+        // SCENARIO 2: CHECK-IN ONLY
+        elseif ($user_sync_in) {
+             $payload['checkIn'] = $row->first_in;
+        }
+        // SCENARIO 1: CHECK-OUT ONLY
+        elseif ($user_sync_out) {
+             $payload['checkOut'] = $row->last_out;
+        }
+        else {
+            // Nothing selected
+            continue;
+        }
+
+        $response = $this->Zoho_model->pushAttendance($payload);
+        $msg = json_encode($response);
+
+        // Success Detection
+        $isSuccess = false;
+        
+        // 1. Standard success
+        if (isset($response['response']) && stripos($response['response'], 'success') !== false) {
+            $isSuccess = true;
+        }
+        // 2. Message based success
+        elseif (isset($response['message']) && stripos($response['message'], 'Success') !== false) {
+             $isSuccess = true;
+        }
+        // 3. "Duplicate" or "Exist" = Success (Data is there)
+        elseif (stripos($msg, 'duplicate') !== false || stripos($msg, 'exist') !== false) {
+             $isSuccess = true;
+        }
+        
+        if ($isSuccess) {
+            $success_ids[] = $row->id;
+            $status_msg = 'Success';
+        } else {
+            $errors[] = "Emp {$row->emp_id}: {$msg}";
+            $status_msg = 'Error: ' . substr($msg, 0, 50); // Truncate error for table
+        }
+
+        // Capture details for email (For both Success AND Error)
+        $synced_details[] = [
+            'emp_id' => $row->emp_id,
+            'name' => $row->emp_name ?? 'Unknown',
+            'date' => $row->work_date,
+            'in' => $payload['checkIn'] ?? '-',
+            'out' => $payload['checkOut'] ?? '-',
+            'status' => $status_msg
+        ];
+    }
+    
+    
+    /* -------------------------------------------------------
+     * 4. UPDATE LOCAL DB
+     * ----------------------------------------------------- */
+
+    /* -------------------------------------------------------
+     * 4. UPDATE LOCAL DB
+     * ----------------------------------------------------- */
+    if (!empty($success_ids)) {
+        $this->db->where_in('id', $success_ids)->update('zoho_attendance_daily', [
+            'synced'      => 1,
+            'synced_at'   => date('Y-m-d H:i:s'),
+            'retry_count' => 0,
+            'last_error'  => null
+        ]);
+    }
+
+    if (!empty($errors)) {
+        $this->db->where('synced', 0)->update('zoho_attendance_daily', [
+            'last_error' => substr($errors[0], 0, 255)
+        ]);
+    }
+
+    /* -------------------------------------------------------
+     * 5. RESPONSE + EMAIL
+     * ----------------------------------------------------- */
+    $summary = [
+        'start_date' => $start_date,
+        'end_date'   => $end_date,
+        'imported'   => count($success_ids),
+        'errors'     => count($errors),
+        'total'      => count($records)
+    ];
+
+    // Pass detailed list to the email function (synced_details)
+    // We check if $synced_details is set, otherwise empty array
+    $details_payload = isset($synced_details) ? $synced_details : [];
+    
+    $this->Zoho_model->send_attendance_report($summary, $details_payload);
+
+    echo json_encode([
+        'status'  => empty($errors) ? 'success' : 'warning',
+        'summary' => $summary,
+        'errors'  => array_slice($errors, 0, 5)
+    ]);
+}
+
+
 }

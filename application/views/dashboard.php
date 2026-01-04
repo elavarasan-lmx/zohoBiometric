@@ -21,11 +21,10 @@
 			border-left: 5px solid;
 			border-radius: 12px;
 			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s;
 		}
         
         .stat-card:hover {
-            transform: translateY(-5px);
+            /* Animation removed */
         }
 
 		.stat-card.employees { border-left-color: #10b981; }
@@ -57,16 +56,41 @@
             border-radius: 0 0 1rem 1rem;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        
-        .btn-outline-primary {
-            color: #fff;
-            border-color: #fff;
+
+        .status-pulse {
+            width: 10px;
+            height: 10px;
+            background: #00d2ff;
+            border-radius: 50%;
+            box-shadow: 0 0 0 0 rgba(0, 210, 255, 0.7);
+            animation: pulse 2s infinite;
         }
-        .btn-outline-primary:hover {
-            background-color: #fff;
-            color: #2563eb;
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 210, 255, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 210, 255, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 210, 255, 0); }
         }
+
+        .activity-item {
+            border-left: 2px solid #e2e8f0;
+            margin-left: 1rem;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+        .activity-item::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            background: #3b82f6;
+            border-radius: 50%;
+            position: absolute;
+            left: -7px;
+            top: 5px;
+        }
+        .ls-1 { letter-spacing: 1px; }
 	</style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -74,96 +98,168 @@
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg navbar-light py-3 px-4">
         <div class="container-fluid">
-            <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-fingerprint me-2"></i>Biometric System</a>
+            <a class="navbar-brand fw-bold text-primary" href="<?= site_url('C_zoho/dashboard') ?>"><i class="fas fa-fingerprint me-2"></i>Biometric System</a>
+            <?php $active_method = $this->uri->segment(2); ?>
             <div class="ms-auto">
-                <a href="<?= site_url('C_zoho/dashboard') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary me-2">
+                <a href="<?= site_url('C_zoho/dashboard') ?>" class="btn btn-sm <?= ($active_method == 'dashboard' || $active_method == '') ? 'btn-primary' : 'btn-outline-primary' ?> me-2">
                     <i class="fas fa-home me-1"></i> Dashboard
                 </a>
-                <a href="<?= site_url('C_zoho/reports') ?>" class="btn btn-sm btn-outline-primary text-primary border-primary me-2">
+                <a href="<?= site_url('C_zoho/reports') ?>" class="btn btn-sm <?= ($active_method == 'reports') ? 'btn-primary' : 'btn-outline-primary' ?> me-2">
                     <i class="fas fa-file-alt me-1"></i> Reports
                 </a>
-                 <a href="<?= site_url('C_zoho/admin') ?>" class="btn btn-sm btn-primary">
+                <a href="<?= site_url('C_zoho/admin') ?>" class="btn btn-sm <?= ($active_method == 'admin') ? 'btn-primary' : 'btn-outline-primary' ?>">
                     <i class="fas fa-cogs me-1"></i> Admin Panel
                 </a>
             </div>
         </div>
     </nav>
-
-	<div class="container-fluid px-4">
-		<!-- Filter Section -->
+	<div class="container-fluid px-4 pb-4">
+        
+		<!-- Top Row: Welcome & Status -->
 		<div class="row mb-4">
-			<div class="col-12">
-				<div class="card bg-white">
-					<div class="card-body">
-						<div class="row g-3 align-items-end">
-							<div class="col-md-3">
-								<label class="form-label fw-bold">Select Date</label>
-								<input type="date" id="date" class="form-control" value="<?= date('Y-m-d') ?>">
-							</div>
-							<div class="col-md-2">
-								<button type="button" id="btnLoad" class="btn btn-load w-100 text-white">
-									<i class="fas fa-sync-alt me-2"></i>Load Data
-								</button>
-							</div>
-							<div class="col-md-4 ms-auto text-end">
-                                <label class="form-label fw-bold d-block">Quick Select</label>
-								<div class="btn-group">
-									<button type="button" class="btn btn-secondary" data-range="today">Today</button>
-									<button type="button" class="btn btn-secondary" data-range="yesterday">Yesterday</button>
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
+			<div class="col-md-8">
+                <div class="text-white">
+                    <h2 class="fw-bold mb-0"><i class="fas fa-chart-line me-2"></i>Live Overview</h2>
+                    <p class="opacity-75" id="displayCompanyName">System Dashboard</p>
+                </div>
+            </div>
+            <div class="col-md-4 text-end">
+                <div class="card bg-white bg-opacity-10 text-white border-0 shadow-sm py-2 px-3 d-inline-block">
+                    <div class="d-flex align-items-center">
+                        <div class="status-pulse me-2"></div>
+                        <span class="small fw-bold text-uppercase ls-1">Device: <span class="text-info">Connected</span></span>
+                    </div>
+                </div>
+            </div>
 		</div>
 
-		<!-- Statistics -->
+		<!-- Statistics Summary -->
 		<div class="row mb-4">
-			<div class="col-md-3 mb-3">
+			<div class="col-lg-3 col-md-6 mb-3">
 				<div class="card stat-card employees h-100">
-					<div class="card-body text-center">
-						<i class="fas fa-users fa-3x text-success mb-2"></i>
-						<div class="text-muted small">Total Employees</div>
-						<h2 class="fw-bold mb-0" id="totalEmployees">0</h2>
+					<div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+						        <div class="text-muted small text-uppercase fw-bold">Team Strength</div>
+						        <h2 class="fw-bold mb-0" id="totalEmployees">0</h2>
+                            </div>
+						    <i class="fas fa-users fa-2x text-success opacity-50"></i>
+                        </div>
 					</div>
 				</div>
 			</div>
-			<div class="col-md-3 mb-3">
+			<div class="col-lg-3 col-md-6 mb-3">
 				<div class="card stat-card present h-100">
-					<div class="card-body text-center">
-						<i class="fas fa-user-check fa-3x text-primary mb-2"></i>
-						<div class="text-muted small">Present</div>
-						<h2 class="fw-bold mb-0" id="presentCount">0</h2>
-						<small class="text-muted" id="presentPercent"></small>
+					<div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+						        <div class="text-muted small text-uppercase fw-bold">In Office</div>
+						        <h2 class="fw-bold mb-0" id="presentCount">0</h2>
+                                <small class="badge bg-primary-subtle text-primary border border-primary-subtle" id="presentPercent">0%</small>
+                            </div>
+						    <i class="fas fa-user-check fa-2x text-primary opacity-50"></i>
+                        </div>
 					</div>
 				</div>
 			</div>
-			<div class="col-md-3 mb-3">
+			<div class="col-lg-3 col-md-6 mb-3">
 				<div class="card stat-card absent h-100">
-					<div class="card-body text-center">
-						<i class="fas fa-user-times fa-3x text-danger mb-2"></i>
-						<div class="text-muted small">Absent</div>
-						<h2 class="fw-bold mb-0" id="absentCount">0</h2>
+					<div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+						        <div class="text-muted small text-uppercase fw-bold">Missing</div>
+						        <h2 class="fw-bold mb-0" id="absentCount">0</h2>
+                            </div>
+						    <i class="fas fa-user-times fa-2x text-danger opacity-50"></i>
+                        </div>
 					</div>
 				</div>
 			</div>
-			<div class="col-md-3 mb-3">
+			<div class="col-lg-3 col-md-6 mb-3">
 				<div class="card stat-card pending h-100">
-					<div class="card-body text-center">
-						<i class="fas fa-clock fa-3x text-warning mb-2"></i>
-						<div class="text-muted small">Pending Sync</div>
-						<h2 class="fw-bold mb-0" id="pendingSync">0</h2>
+					<div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+						        <div class="text-muted small text-uppercase fw-bold">Unsynced</div>
+						        <h2 class="fw-bold mb-0" id="pendingSync">0</h2>
+                            </div>
+						    <i class="fas fa-cloud-upload-alt fa-2x text-warning opacity-50"></i>
+                        </div>
 					</div>
 				</div>
 			</div>
 		</div>
 
-        <!-- Data Table -->
-		<div class="row">
+        <!-- Main Visuals Section -->
+        <div class="row g-4 mb-4">
+            <!-- Weekly Trend -->
+            <div class="col-lg-8">
+                <div class="card h-100 border-0 shadow-lg">
+                    <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 fw-bold"><i class="fas fa-chart-area me-2 text-primary"></i>Weekly Attendance Trend</h6>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary active">7 Days</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div style="height: 300px;">
+                            <canvas id="weeklyChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity Feed -->
+            <div class="col-lg-4">
+                <div class="card h-100 border-0 shadow-lg overflow-hidden">
+                    <div class="card-header bg-white border-0 py-3">
+                        <h6 class="mb-0 fw-bold"><i class="fas fa-stream me-2 text-info"></i>Live Activity Feed</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush" id="activityFeed" style="max-height: 400px; overflow-y: auto;">
+                            <!-- Activity list -->
+                        </div>
+                    </div>
+                    <div class="card-footer bg-white border-0 text-center py-2">
+                        <a href="<?= site_url('C_zoho/reports') ?>" class="text-decoration-none small fw-bold">View Full Logs &rarr;</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- Today's Late Comers -->
+            <div class="col-12">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-header bg-white border-0 py-3">
+                        <h6 class="mb-0 fw-bold text-danger"><i class="fas fa-user-clock me-2"></i>Today's Late Arrivals</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0" id="lateTable">
+                                <thead class="bg-light">
+                                    <tr>
+                                        <th class="ps-4">Employee</th>
+                                        <th>Expected</th>
+                                        <th>Arrived</th>
+                                        <th>Delay</th>
+                                        <th class="pe-4 text-end">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="lateComersBody">
+                                    <!-- Populated via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+		<!-- Daily Detail Section (Collapsed by default or simplified) -->
+		<div class="row d-none">
+            <!-- Table hidden in favor of feed, but kept for JS compatibility if needed -->
 			<div class="col-12">
-				<div class="card">
-					<div class="card-body">
 						<table id="attendanceTable" class="table table-striped w-100">
 							<thead>
 								<tr>
@@ -179,14 +275,12 @@
 							</thead>
 							<tbody></tbody>
 						</table>
-					</div>
-				</div>
 			</div>
 		</div>
 	</div>
 
     <!-- Edit Attendance Modal -->
-	<div class="modal fade" id="editModal" tabindex="-1">
+	<div class="modal" id="editModal" tabindex="-1">
 		<div class="modal-dialog">
 			<div class="modal-content">
 				<div class="modal-header">
@@ -241,111 +335,119 @@
 	<script>
 		const API_URL = "<?= site_url('C_zoho/dashboard_api') ?>";
 		const UPDATE_URL = "<?= site_url('C_zoho/update_attendance') ?>";
-		let table;
+		let weeklyChart = null;
 
 		$(document).ready(function() {
-			table = $('#attendanceTable').DataTable({
-				pageLength: 25,
-				dom: "<'row mb-2'<'col-md-6'B><'col-md-6'f>><'row'<'col-12'tr>><'row mt-2'<'col-md-5'i><'col-md-7'p>>",
-				buttons: [{
-					extend: 'excelHtml5',
-					text: '<i class="fas fa-file-excel"></i> Excel',
-					className: 'btn btn-success btn-sm'
-				}],
-				order: [
-					[2, 'desc']
-				]
-			});
-
-			$('#btnLoad').on('click', loadData);
-			$('.btn-group button').on('click', function() {
-				const range = $(this).data('range');
-				const today = new Date();
-				let date = today.toISOString().split('T')[0];
-				if (range === 'yesterday') {
-					today.setDate(today.getDate() - 1);
-					date = today.toISOString().split('T')[0];
-				}
-				$('#date').val(date);
-				loadData();
-			});
-
-            $('#attendanceTable').on('click', '.btn-edit', function() {
-                const data = $(this).data();
-                $('#edit_emp_id').val(data.empid);
-                $('#edit_emp_name').val(data.empname);
-                $('#edit_date').val(data.date);
-                $('#edit_date_display').val(data.date);
-                $('#edit_first_in').val(data.in === '-' ? '' : data.in);
-                $('#edit_last_out').val(data.out === '-' ? '' : data.out);
-                new bootstrap.Modal('#editModal').show();
-            });
-
-            $('#btnSaveEdit').on('click', function() {
-                const formData = {
-                    emp_id: $('#edit_emp_id').val(),
-                    work_date: $('#edit_date').val(),
-                    first_in: $('#edit_first_in').val(),
-                    last_out: $('#edit_last_out').val()
-                };
-
-                $('#btnSaveEdit').prop('disabled', true).text('Saving...');
-
-                $.post(UPDATE_URL, formData, function(res) {
-                    $('#btnSaveEdit').prop('disabled', false).text('Save Changes');
-                    if (res.status === 'success') {
-                        bootstrap.Modal.getInstance('#editModal').hide();
-                        alert(res.message);
-                        loadData(); // Reload to show updated times
-                    } else {
-                        alert('Error: ' + res.message);
-                    }
-                }, 'json');
-            });
-
 			loadData();
 		});
 
-		function loadData() {
-			const date = $('#date').val();
-			$('#btnLoad').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Loading...');
+		function initTrendChart(trendData) {
+            const ctx = document.getElementById('weeklyChart').getContext('2d');
+            
+            if (weeklyChart) weeklyChart.destroy();
 
-			$.get(API_URL, {
-				from: date,
-				to: date
-			}, function(data) {
+            const labels = trendData.map(d => {
+                const date = new Date(d.work_date);
+                return date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+            });
+            const counts = trendData.map(d => d.present_count);
+
+            weeklyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Present Count',
+                        data: counts,
+                        fill: true,
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderColor: '#3b82f6',
+                        tension: 0.4,
+                        borderWidth: 3,
+                        pointBackgroundColor: '#fff',
+                        pointBorderColor: '#3b82f6',
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { display: false } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+		function loadData() {
+			$.get(API_URL, function(data) {
 				$('#totalEmployees').text(data.stats.total_employees);
 				$('#presentCount').text(data.stats.present_in_range);
 				$('#absentCount').text(data.stats.total_employees - data.stats.present_in_range);
 				$('#pendingSync').text(data.stats.pending_sync);
-				$('#presentPercent').text(data.stats.total_employees > 0 ? ((data.stats.present_in_range / data.stats.total_employees) * 100).toFixed(1) + '%' : '0%');
+				$('#presentPercent').text(data.stats.total_employees > 0 ? ((data.stats.present_in_range / data.stats.total_employees) * 100).toFixed(0) + '%' : '0%');
+				
+                if(data.settings && data.settings.company_name) {
+                    $('#displayCompanyName').text(data.settings.company_name);
+                }
 
-				let rows = [];
-				$.each(data.daily_attendance, function(i, d) {
-					let hours = '-';
-					if (d.first_in && d.last_out && d.first_in !== '-' && d.last_out !== '-') {
-						const [h1, m1] = d.first_in.split(':').map(Number);
-						const [h2, m2] = d.last_out.split(':').map(Number);
-						let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-						if (totalMinutes < 0) totalMinutes += 24 * 60;
-						hours = Math.floor(totalMinutes / 60) + 'h ' + (totalMinutes % 60) + 'm';
-					}
-					let status = d.first_in ? '<span class="badge bg-success">Present</span>' : '<span class="badge bg-danger">Absent</span>';
-					
-                    const editBtn = `<button class="btn btn-sm btn-outline-primary btn-edit" 
-                        data-empid="${d.emp_id}" 
-                        data-empname="${d.name || d.emp_id}" 
-                        data-date="${d.work_date}" 
-                        data-in="${d.first_in || '-'}" 
-                        data-out="${d.last_out || '-'}">
-                        <i class="fas fa-edit"></i>
-                    </button>`;
+                // Update Weekly Chart
+                if (data.weekly_trend) initTrendChart(data.weekly_trend);
 
-                    rows.push([d.emp_id, d.name || d.emp_id, d.work_date, d.first_in || '-', d.last_out || '-', hours, status, editBtn]);
-				});
+                // Update Activity Feed
+				let feedHtml = '';
+                if (data.recent_punches.length === 0) {
+                    feedHtml = '<div class="p-4 text-center text-muted">No recent activity detected</div>';
+                } else {
+                    $.each(data.recent_punches, function(i, p) {
+                        const time = p.punch_time.substring(0, 5);
+                        feedHtml += `
+                            <div class="list-group-item border-0 px-4 py-3">
+                                <div class="activity-item">
+                                    <div class="d-flex justify-content-between">
+                                        <h6 class="mb-0 fw-bold">${p.name || p.emp_id}</h6>
+                                        <span class="badge bg-light text-dark shadow-sm">${time}</span>
+                                    </div>
+                                    <p class="text-muted small mb-0">Biometric Punch Recorded</p>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+                $('#activityFeed').html(feedHtml);
 
-				table.clear().rows.add(rows).draw();
-				$('#btnLoad').prop('disabled', false).html('<i class="fas fa-sync-alt me-2"></i>Load Data');
+                // Update Late Comers
+                let lateHtml = '';
+                let lateCount = 0;
+                const threshold = data.settings ? data.settings.late_threshold : '09:15';
+                
+                $.each(data.daily_attendance, function(i, d) {
+                    if (d.first_in && d.first_in > threshold + ':00') {
+                        lateCount++;
+                        const firstIn = d.first_in.substring(0, 5);
+                        lateHtml += `
+                            <tr>
+                                <td class="ps-4">
+                                    <div class="fw-bold text-dark">${d.name || d.emp_id}</div>
+                                    <div class="small text-muted">${d.emp_id}</div>
+                                </td>
+                                <td>${threshold} AM</td>
+                                <td><span class="text-danger fw-bold">${firstIn} AM</span></td>
+                                <td><span class="badge bg-danger-subtle text-danger font-monospace">Late</span></td>
+                                <td class="pe-4 text-end">
+                                    <a href="<?= site_url('C_zoho/reports') ?>?emp_id=${d.emp_id}" class="btn btn-sm btn-outline-secondary">View Profile</a>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                });
+                
+                if (lateCount === 0) {
+                    lateHtml = '<tr><td colspan="5" class="text-center py-4 text-muted">Exemplary punctuality today! No late arrivals detected.</td></tr>';
+                }
+                $('#lateComersBody').html(lateHtml);
 			});
 		}
 	</script>

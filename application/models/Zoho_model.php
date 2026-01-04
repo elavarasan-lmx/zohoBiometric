@@ -356,21 +356,35 @@ class Zoho_model extends CI_Model
      */
     public function pushAttendance($data)
     {
-        // Convert date format: Y-m-d to d/m/Y (e.g., 2025-12-21 to 21/12/2025)
-        $date = DateTime::createFromFormat('Y-m-d', $data['date'])
-            ->format('d/m/Y');
+        // Date formatting 02/01/2026
+        $dateObj = DateTime::createFromFormat('Y-m-d', $data['date']);
+        $dateStr = $dateObj ? $dateObj->format('d/m/Y') : date('d/m/Y', strtotime($data['date']));
 
-        // Build query parameters with date and time combined
-        $params = http_build_query([
+        // Basic Params
+        $params = [
             'empId'      => $data['empId'],
-            'dateFormat' => 'dd/MM/yyyy HH:mm:ss',
-            'checkIn'    => $date . ' ' . $data['checkIn'],  // e.g., 21/12/2025 09:00:00
-            'checkOut'   => $date . ' ' . $data['checkOut']  // e.g., 21/12/2025 18:00:00
-        ]);
+            'dateFormat' => 'dd/MM/yyyy HH:mm:ss'
+        ];
 
-        // Send via form-encoded POST (Zoho attendance API requirement)
+        // Case: Check-In provided
+        if (!empty($data['checkIn'])) {
+            // Ensure Time Format H:i:s (09:01:00)
+            $timeIn = date('H:i:s', strtotime($data['checkIn']));
+            $params['checkIn'] = $dateStr . ' ' . $timeIn;
+        }
+
+        // Case: Check-Out provided
+        if (!empty($data['checkOut'])) {
+            // Ensure Time Format H:i:s (21:35:00)
+            $timeOut = date('H:i:s', strtotime($data['checkOut']));
+            $params['checkOut'] = $dateStr . ' ' . $timeOut;
+        }
+
+        // Use RFC3986 (spaces become %20) to match Postman/User example exactly
+        $queryString = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+
         return $this->curlForm(
-            $this->people_url . '/people/api/attendance?' . $params
+            $this->people_url . '/people/api/attendance?' . $queryString
         );
     }
 
@@ -503,20 +517,111 @@ class Zoho_model extends CI_Model
     /**
      * Helper to send attendance sync report via email (Unified Format)
      */
-    public function send_attendance_report($s)
+    public function send_attendance_report($s, $details = [])
     {
         $subject = "Zoho Attendance Sync Report: " . ($s['start_date'] ?? date('Y-m-d')) . " to " . ($s['end_date'] ?? date('Y-m-d'));
         $message = "<h2>Zoho Attendance Sync Completed</h2>";
-        $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse;'>";
+        
+        // Summary Table
+        $message .= "<h3>Summary</h3>";
+        $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse; margin-bottom: 20px;'>";
         $message .= "<tr><td><b>Period</b></td><td>" . ($s['start_date'] ?? '-') . " to " . ($s['end_date'] ?? '-') . "</td></tr>";
         $message .= "<tr><td><b>Total Records</b></td><td>" . ($s['total'] ?? 0) . "</td></tr>";
-        $message .= "<tr><td><b style='color: green;'>Imported (New)</b></td><td>" . ($s['imported'] ?? 0) . "</td></tr>";
-        $message .= "<tr><td><b style='color: blue;'>Updated (Existing)</b></td><td>" . ($s['updated'] ?? 0) . "</td></tr>";
-        $message .= "<tr><td><b style='color: orange;'>Skipped (Absent)</b></td><td>" . ($s['skipped'] ?? 0) . "</td></tr>";
+        $message .= "<tr><td><b style='color: green;'>Imported/Synced</b></td><td>" . ($s['imported'] ?? 0) . "</td></tr>";
         $message .= "<tr><td><b style='color: red;'>Errors</b></td><td>" . ($s['errors'] ?? 0) . "</td></tr>";
         $message .= "</table>";
-        $message .= "<p>Date: " . date('Y-m-d H:i:s') . "</p>";
+
+        // Details Table
+        if (!empty($details)) {
+            $message .= "<h3>Synced Details</h3>";
+            $message .= "<table border='1' cellpadding='5' style='border-collapse: collapse; width: 100%;'>";
+            $message .= "<tr style='background-color: #f2f2f2;'>
+                            <th>Emp ID</th>
+                            <th>Name</th>
+                            <th>Date</th>
+                            <th>Check-In</th>
+                            <th>Check-Out</th>
+                            <th>Status</th>
+                        </tr>";
+            
+            foreach ($details as $row) {
+                // Ensure array keys exist fallback
+                $eid = $row['emp_id'] ?? '-';
+                $name = $row['name'] ?? 'Unknown';
+                $date = $row['date'] ?? '-';
+                $in = $row['in'] ?? '-';
+                $out = $row['out'] ?? '-';
+                $st = $row['status'] ?? 'Success';
+                
+                $message .= "<tr>
+                                <td>$eid</td>
+                                <td>$name</td>
+                                <td>$date</td>
+                                <td>$in</td>
+                                <td>$out</td>
+                                <td>$st</td>
+                            </tr>";
+            }
+            $message .= "</table>";
+        } else {
+            $message .= "<p>No specific records were processed or details list is empty.</p>";
+        }
+
+        $message .= "<p>Generated at: " . date('Y-m-d H:i:s') . "</p>";
 
         return $this->send_notification($subject, $message);
+    }
+    /**
+     * Get system setting from database
+     */
+    public function get_setting($key, $default = null)
+    {
+        $this->init_settings_table();
+        $query = $this->db->get_where('zk_settings', ['skey' => $key], 1);
+        $row = $query->row();
+        return $row ? $row->svalue : $default;
+    }
+
+    /**
+     * Save/Update system setting
+     */
+    public function save_setting($key, $value)
+    {
+        $this->init_settings_table();
+        $exists = $this->db->get_where('zk_settings', ['skey' => $key], 1)->row();
+        if ($exists) {
+            return $this->db->update('zk_settings', ['svalue' => $value, 'updated_at' => date('Y-m-d H:i:s')], ['skey' => $key]);
+        } else {
+            return $this->db->insert('zk_settings', [
+                'skey' => $key,
+                'svalue' => $value,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+        }
+    }
+
+    /**
+     * Initialize settings table if missing
+     */
+    private function init_settings_table()
+    {
+        if (!$this->db->table_exists('zk_settings')) {
+            $this->load->dbforge();
+            $this->dbforge->add_field([
+                'id' => ['type' => 'INT', 'constraint' => 11, 'auto_increment' => TRUE],
+                'skey' => ['type' => 'VARCHAR', 'constraint' => 50, 'unique' => TRUE],
+                'svalue' => ['type' => 'TEXT', 'null' => TRUE],
+                'created_at' => ['type' => 'DATETIME', 'null' => TRUE],
+                'updated_at' => ['type' => 'DATETIME', 'null' => TRUE]
+            ]);
+            $this->dbforge->add_key('id', TRUE);
+            $this->dbforge->create_table('zk_settings');
+
+            // Default values
+            $this->save_setting('late_threshold', '09:15');
+            $this->save_setting('grace_period', '0');
+            $this->save_setting('company_name', Globals::$admin_company_name);
+        }
     }
 }
