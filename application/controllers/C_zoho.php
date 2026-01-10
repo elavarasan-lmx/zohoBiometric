@@ -554,7 +554,7 @@ class C_zoho extends CI_Controller
 		// 1. Fetch Main Attendance Data
 		$this->db->select('d.emp_id, d.work_date, d.first_in, d.last_out, d.synced, e.name')
 			->from('zoho_attendance_daily d')
-			->join('zoho_employees e', 'd.emp_id = e.emp_id', 'left')
+			->join('zoho_employees e', 'd.emp_id = e.emp_id', 'inner')
 			->where('d.work_date >=', $start_date)
 			->where('d.work_date <=', $end_date);
 		
@@ -577,7 +577,7 @@ class C_zoho extends CI_Controller
 		// Assuming iclock_transaction has columns: emp_code, punch_time, punch_state, terminal_sn
 		$this->db->select('r.emp_code as emp_id, r.punch_time, r.punch_state, r.terminal_sn, DATE(r.punch_time) as work_date, e.name')
 			->from('iclock_transaction r')
-			->join('zoho_employees e', 'r.emp_code = e.emp_id', 'left')
+			->join('zoho_employees e', 'r.emp_code = e.emp_id', 'inner')
 			->where('r.punch_time >=', $start_date . ' 00:00:00')
 			->where('r.punch_time <=', $end_date . ' 23:59:59')
 			->order_by('r.punch_time', 'DESC')
